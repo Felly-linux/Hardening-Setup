@@ -1,0 +1,109 @@
+# =============================================================================
+# /etc/fail2ban/jail.local — VPS Hardening Suite template
+# =============================================================================
+# Template variables substituted by modules/05_fail2ban.sh:
+#   {{SSH_PORT}}       — the configured SSH port (e.g. 2222)
+#   {{WHITELIST_IPS}}  — space-separated management IPs to never ban
+# =============================================================================
+
+# ── Global defaults ──────────────────────────────────────────────────────────
+[DEFAULT]
+
+# Hosts that will never be banned (whitelist)
+# Always include localhost; add management IPs here
+ignoreip = 127.0.0.1/8 ::1 {{WHITELIST_IPS}}
+
+# Ban duration in seconds (3600 = 1 hour for first offence)
+bantime  = 3600
+
+# Time window to count failures (600 = 10 minutes)
+findtime = 600
+
+# Number of failures before ban
+maxretry = 5
+
+# Ban action: iptables-multiport is the most portable choice
+banaction = iptables-multiport
+banaction_allports = iptables-allports
+
+# Use journald backend (preferred on systemd systems)
+backend = systemd
+
+# Encoding of log files
+encoding = UTF-8
+
+# Email settings (uncomment to enable notifications)
+# destemail  = admin@example.com
+# sendername = Fail2Ban
+# action = %(action_mwl)s
+
+# DNS lookups: 'warn' means try but don't block if unavailable
+usedns = warn
+
+# All jails disabled unless explicitly enabled below
+enabled = false
+
+# ── SSH brute-force protection ───────────────────────────────────────────────
+[sshd]
+enabled  = true
+port     = {{SSH_PORT}}
+protocol = tcp
+filter   = sshd
+backend  = systemd
+# Stricter settings: 3 failures in 5 min → 2 hour ban
+maxretry = 3
+bantime  = 7200
+findtime = 300
+
+# ── SSH DDoS / rapid-connect flood ──────────────────────────────────────────
+# Catches bots that make many rapid connection attempts
+[sshd-ddos]
+enabled  = true
+port     = {{SSH_PORT}}
+protocol = tcp
+filter   = sshd-ddos
+backend  = systemd
+# Short window: 5 attempts in 60 seconds
+maxretry = 5
+bantime  = 3600
+findtime = 60
+
+# ── Recidive — persistent multi-jail offenders ──────────────────────────────
+# An IP already banned in other jails gets an extended 7-day ban
+[recidive]
+enabled   = true
+filter    = recidive
+logpath   = /var/log/fail2ban.log
+action    = iptables-allports[name=recidive]
+# 3 bans within 12 hours → 7-day ban
+bantime   = 604800
+findtime  = 43200
+maxretry  = 3
+
+# ── Nginx HTTP auth failures (only active if nginx is installed) ─────────────
+[nginx-http-auth]
+enabled  = false
+port     = http,https
+filter   = nginx-http-auth
+logpath  = /var/log/nginx/error.log
+maxretry = 5
+bantime  = 3600
+
+# ── Nginx request flood / DDoS ───────────────────────────────────────────────
+[nginx-limit-req]
+enabled  = false
+port     = http,https
+filter   = nginx-limit-req
+logpath  = /var/log/nginx/error.log
+maxretry = 10
+findtime = 60
+bantime  = 600
+
+# ── Nginx bot/scanner detection ──────────────────────────────────────────────
+[nginx-botsearch]
+enabled  = false
+port     = http,https
+filter   = nginx-botsearch
+logpath  = /var/log/nginx/access.log
+maxretry = 2
+bantime  = 86400

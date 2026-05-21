@@ -1,0 +1,13 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                       *** AUTHORIZED ACCESS ONLY ***                        ║
+║                                                                              ║
+║  This system is private property of the owning organization.                ║
+║  Unauthorized access, use, or modification is strictly prohibited and        ║
+║  may be subject to civil and criminal penalties under applicable law.        ║
+║                                                                              ║
+║  All connections, keystrokes, and data transfers are monitored and logged    ║
+║  for security and compliance purposes.                                       ║
+║                                                                              ║
+║  By proceeding past this point you explicitly consent to monitoring of       ║
+║  your session. If you are not an authorized user, DISCONNECT NOW.            ║
+╚══════════════════════════════════════════════════════════════════════════════╝

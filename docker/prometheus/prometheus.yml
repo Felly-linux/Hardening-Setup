@@ -1,0 +1,102 @@
+# =============================================================================
+# Prometheus configuration — VPS Hardening Suite
+# =============================================================================
+# Scrape interval  : 15s
+# Evaluation interval: 15s
+# Retention        : 30d / 10GB (configured via CLI flags in docker-compose.yml)
+#
+# Port reference (all internal to the Docker monitoring network):
+#   prometheus    : 9090
+#   node-exporter : 9100
+#   cadvisor      : 8080 (internal), 8081 (host-mapped)
+#   grafana       : 3000
+#   loki          : 3100
+# =============================================================================
+
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+  scrape_timeout:      10s
+  external_labels:
+    monitor:     'vps-hardening-suite'
+    environment: 'production'
+
+# ---------------------------------------------------------------------------
+# Alerting rules
+# ---------------------------------------------------------------------------
+rule_files:
+  - "/etc/prometheus/alerts.yml"
+  - "/etc/prometheus/rules/*.yml"
+
+# ---------------------------------------------------------------------------
+# Alertmanager (uncomment to enable — configure alertmanager separately)
+# ---------------------------------------------------------------------------
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets: ['alertmanager:9093']
+
+# ---------------------------------------------------------------------------
+# Scrape configurations
+# ---------------------------------------------------------------------------
+scrape_configs:
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+
+  # Node Exporter — host system metrics (CPU, memory, disk, network, processes)
+  # Runs on the monitoring Docker network, bound to container port 9100
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+
+  # cAdvisor — Docker container CPU/memory/network/IO metrics
+  # Internal port 8080 is used within the Docker network
+  - job_name: 'cadvisor'
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['cadvisor:8080']
+    metric_relabel_configs:
+      # Drop high-cardinality/low-value container metrics
+      - source_labels: [__name__]
+        regex: 'container_tasks_state|container_memory_failures_total'
+        action: drop
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+
+  # Grafana self-metrics
+  - job_name: 'grafana'
+    static_configs:
+      - targets: ['grafana:3000']
+    metrics_path: /metrics
+
+  # Loki self-metrics
+  - job_name: 'loki'
+    static_configs:
+      - targets: ['loki:3100']
+    metrics_path: /metrics
+
+  # Promtail self-metrics
+  - job_name: 'promtail'
+    static_configs:
+      - targets: ['promtail:9080']
+    metrics_path: /metrics
+
+  # Docker daemon built-in metrics
+  # Requires daemon.json: {"metrics-addr":"127.0.0.1:9323"}
+  # 172.17.0.1 is the standard Docker bridge gateway (host IP from container perspective)
+  - job_name: 'docker-daemon'
+    static_configs:
+      - targets: ['172.17.0.1:9323']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance

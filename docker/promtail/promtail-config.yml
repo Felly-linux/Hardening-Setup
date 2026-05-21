@@ -1,0 +1,139 @@
+# =============================================================================
+# Promtail configuration — VPS Hardening Suite
+# =============================================================================
+# Collects logs from: auth, syslog, kernel, fail2ban, crowdsec, ufw, dpkg,
+#                     vps-hardening-suite itself, and all Docker containers.
+# Pushes to Loki at http://loki:3100 (internal Docker network name)
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+# ---------------------------------------------------------------------------
+# Scrape configs
+# ---------------------------------------------------------------------------
+scrape_configs:
+
+  # ── SSH / PAM authentication log ─────────────────────────────────────────
+  - job_name: auth
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: auth
+          app: sshd
+          host: vps
+          __path__: /var/log/auth.log
+
+  # ── System syslog ─────────────────────────────────────────────────────────
+  - job_name: syslog
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: syslog
+          host: vps
+          __path__: /var/log/syslog
+
+  # ── Kernel messages ───────────────────────────────────────────────────────
+  - job_name: kernel
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: kernel
+          host: vps
+          __path__: /var/log/kern.log
+
+  # ── Fail2Ban ──────────────────────────────────────────────────────────────
+  - job_name: fail2ban
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: fail2ban
+          host: vps
+          __path__: /var/log/fail2ban.log
+
+  # ── CrowdSec (glob to catch rotated files too) ────────────────────────────
+  - job_name: crowdsec
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: crowdsec
+          host: vps
+          __path__: /var/log/crowdsec*.log
+
+  # ── UFW firewall ──────────────────────────────────────────────────────────
+  - job_name: ufw
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: ufw
+          host: vps
+          __path__: /var/log/ufw.log
+
+  # ── dpkg package manager ──────────────────────────────────────────────────
+  - job_name: dpkg
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: dpkg
+          host: vps
+          __path__: /var/log/dpkg.log
+
+  # ── VPS Hardening Suite own logs ──────────────────────────────────────────
+  - job_name: vps-hardening
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: vps-hardening
+          host: vps
+          __path__: /var/log/vps-hardening/*.log
+
+  # ── Docker container logs ─────────────────────────────────────────────────
+  # Reads JSON log files written by the Docker json-file log driver.
+  # pipeline_stages extract the container name from the file path and parse
+  # the JSON wrapper that Docker wraps each log line in.
+  - job_name: docker
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: docker
+          host: vps
+          __path__: /var/lib/docker/containers/*/*-json.log
+    pipeline_stages:
+      # Parse the outer Docker JSON envelope: {"log":"...","stream":"stdout","time":"..."}
+      - json:
+          expressions:
+            output:    log
+            stream:    stream
+            timestamp: time
+      # Extract container ID from the file path
+      # Path format: /var/lib/docker/containers/<id>/<id>-json.log
+      - regex:
+          expression: '/var/lib/docker/containers/(?P<container_id>[^/]+)/.+'
+          source:     filename
+      # Attempt to resolve a human-readable name via the label file
+      # (falls back gracefully if docker labels are not available)
+      - labels:
+          stream:       stream
+          container_id: container_id
+      # Use the extracted log field as the log line content
+      - output:
+          source: output
+      # Use Docker's own timestamp for the log entry
+      - timestamp:
+          source: timestamp
+          format: RFC3339Nano

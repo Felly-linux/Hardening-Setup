@@ -1,0 +1,44 @@
+# =============================================================================
+# Grafana datasource provisioning — VPS Hardening Suite
+# =============================================================================
+# This file is loaded at Grafana startup from the provisioning directory.
+# Datasource UIDs are fixed so dashboard JSON can reference them reliably.
+# Changes here override manual UI edits after restart.
+apiVersion: 1
+
+deleteDatasources:
+  - name: Prometheus
+    orgId: 1
+  - name: Loki
+    orgId: 1
+
+datasources:
+
+  - name:      Prometheus
+    uid:       prometheus
+    type:      prometheus
+    access:    proxy
+    url:       http://prometheus:9090
+    isDefault: true
+    editable:  true
+    jsonData:
+      timeInterval:  "15s"     # must match global.scrape_interval in prometheus.yml
+      queryTimeout:  "60s"
+      httpMethod:    POST
+      prometheusType: Prometheus
+    version: 1
+
+  - name:     Loki
+    uid:      loki
+    type:     loki
+    access:   proxy
+    url:      http://loki:3100
+    editable: true
+    jsonData:
+      maxLines: 2000
+      timeout:  "60"
+      derivedFields:
+        - name: TraceID
+          matcherRegex: "traceID=(\\w+)"
+          url: ""
+    version: 1

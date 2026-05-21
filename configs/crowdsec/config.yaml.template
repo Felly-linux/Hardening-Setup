@@ -1,0 +1,53 @@
+# =============================================================================
+# /etc/crowdsec/config.yaml — VPS Hardening Suite template
+# =============================================================================
+# Template variable: {{CROWDSEC_PORT}}
+#   Default: 6767 (moved from 8080 to avoid conflicts with other services)
+#   Substituted by modules/06_crowdsec.sh at install time.
+# =============================================================================
+
+common:
+  daemonize: true
+  log_media: file
+  log_level: info
+  log_dir: /var/log/crowdsec/
+  working_dir: .
+
+config_paths:
+  config_dir:        /etc/crowdsec/
+  data_dir:          /var/lib/crowdsec/data/
+  simulation_path:   /etc/crowdsec/simulation.yaml
+  hub_dir:           /etc/crowdsec/hub/
+  index_path:        /etc/crowdsec/hub/.index.json
+  notification_dir:  /etc/crowdsec/notifications/
+
+crowdsec_service:
+  acquisition_path: /etc/crowdsec/acquis.yaml
+  parser_routines: 1
+
+cscli:
+  output: human
+
+db_config:
+  type:    sqlite
+  db_path: /var/lib/crowdsec/data/crowdsec.db
+
+api:
+  client:
+    insecure_skip_verify: false
+    credentials_path: /etc/crowdsec/local_api_credentials.yaml
+  server:
+    log_level: info
+    # Port {{CROWDSEC_PORT}} — moved from 8080 when that port is occupied
+    listen_uri: 127.0.0.1:{{CROWDSEC_PORT}}
+    profiles_path: /etc/crowdsec/profiles.yaml
+    use_forwarded_for_headers: false
+    trusted_ips:
+      - 127.0.0.1
+      - ::1
+
+prometheus:
+  enabled:     true
+  level:       full
+  listen_addr: 127.0.0.1
+  listen_port: 6060

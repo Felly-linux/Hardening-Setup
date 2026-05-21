@@ -1,0 +1,1346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VPS Hardening Suite — Documentation</title>
+<style>
+  /* ── Reset & Base ──────────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:         #1a1a2e;
+    --sidebar-bg: #16213e;
+    --card-bg:    #0f3460;
+    --accent:     #e94560;
+    --accent2:    #533483;
+    --text:       #e0e0e0;
+    --text-dim:   #9aa0b0;
+    --text-head:  #ffffff;
+    --border:     #1e3a5f;
+    --code-bg:    #0a1628;
+    --green:      #4caf50;
+    --yellow:     #ffb300;
+    --red:        #f44336;
+    --cyan:       #00bcd4;
+    --sidebar-w:  260px;
+    --font-mono:  'SFMono-Regular', 'Consolas', 'Liberation Mono', 'Courier New', monospace;
+    --font-ui:    system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: var(--font-ui);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.65;
+    display: flex;
+    min-height: 100vh;
+  }
+
+  /* ── Sidebar ───────────────────────────────────────────────────────────── */
+  #sidebar {
+    width: var(--sidebar-w);
+    min-height: 100vh;
+    background: var(--sidebar-bg);
+    border-right: 1px solid var(--border);
+    position: fixed;
+    top: 0;
+    left: 0;
+    overflow-y: auto;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .sidebar-logo {
+    padding: 24px 20px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .sidebar-logo h1 {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text-head);
+    letter-spacing: 0.5px;
+  }
+
+  .sidebar-logo .tagline {
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+
+  .sidebar-logo .version-badge {
+    display: inline-block;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 999px;
+    margin-top: 8px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+
+  nav { padding: 12px 0 24px; }
+
+  nav .nav-section {
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    padding: 12px 20px 4px;
+  }
+
+  nav a {
+    display: block;
+    color: var(--text-dim);
+    text-decoration: none;
+    font-size: 0.85rem;
+    padding: 6px 20px;
+    border-left: 3px solid transparent;
+    transition: all 0.15s ease;
+  }
+
+  nav a:hover,
+  nav a.active {
+    color: var(--text-head);
+    background: rgba(233, 69, 96, 0.08);
+    border-left-color: var(--accent);
+  }
+
+  nav a.sub {
+    padding-left: 36px;
+    font-size: 0.8rem;
+  }
+
+  /* ── Main Content ──────────────────────────────────────────────────────── */
+  #main {
+    margin-left: var(--sidebar-w);
+    flex: 1;
+    max-width: 960px;
+    padding: 48px 40px 80px;
+  }
+
+  /* ── Hero ──────────────────────────────────────────────────────────────── */
+  .hero {
+    background: linear-gradient(135deg, var(--card-bg) 0%, var(--accent2) 100%);
+    border-radius: 12px;
+    padding: 40px;
+    margin-bottom: 48px;
+    border: 1px solid var(--border);
+  }
+
+  .hero-ascii {
+    font-family: var(--font-mono);
+    font-size: 0.52rem;
+    color: var(--cyan);
+    line-height: 1.2;
+    white-space: pre;
+    overflow-x: auto;
+    margin-bottom: 20px;
+  }
+
+  .hero h2 {
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: var(--text-head);
+    margin-bottom: 8px;
+  }
+
+  .hero p {
+    color: var(--text-dim);
+    font-size: 0.95rem;
+    max-width: 640px;
+    line-height: 1.7;
+  }
+
+  .hero-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 20px;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(0,0,0,0.3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 12px;
+    font-size: 0.75rem;
+    color: var(--text-dim);
+  }
+
+  .badge .dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 6px var(--green);
+  }
+
+  /* ── Section Headings ──────────────────────────────────────────────────── */
+  h2.section-title {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--text-head);
+    margin: 48px 0 20px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  h2.section-title .icon { font-size: 1.2rem; }
+
+  h3.subsection {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--text-head);
+    margin: 28px 0 12px;
+  }
+
+  p { margin-bottom: 12px; color: var(--text); font-size: 0.92rem; }
+
+  /* ── Architecture Diagram ──────────────────────────────────────────────── */
+  .arch-diagram {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--cyan);
+    line-height: 1.5;
+    white-space: pre;
+    overflow-x: auto;
+    margin: 16px 0;
+  }
+
+  /* ── Cards ─────────────────────────────────────────────────────────────── */
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px;
+    margin: 16px 0;
+  }
+
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    transition: transform 0.15s ease, border-color 0.15s ease;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--accent);
+  }
+
+  .card:hover {
+    transform: translateY(-2px);
+    border-color: var(--accent);
+  }
+
+  .card-icon { font-size: 1.8rem; margin-bottom: 10px; }
+
+  .card h4 {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--text-head);
+    margin-bottom: 6px;
+  }
+
+  .card p {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+  }
+
+  .card-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+
+  .card-port {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--cyan);
+    background: rgba(0, 188, 212, 0.1);
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+
+  .status-dot {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.72rem;
+    font-weight: 600;
+  }
+
+  .status-dot::before {
+    content: '';
+    display: block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+  }
+
+  .status-dot.active::before {
+    background: var(--green);
+    box-shadow: 0 0 6px var(--green);
+  }
+
+  .status-dot.active { color: var(--green); }
+
+  .status-dot.host::before { background: var(--yellow); }
+  .status-dot.host { color: var(--yellow); }
+
+  /* ── Tables ────────────────────────────────────────────────────────────── */
+  .table-wrap { overflow-x: auto; margin: 16px 0; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+
+  thead tr {
+    background: var(--card-bg);
+    border-bottom: 2px solid var(--border);
+  }
+
+  thead th {
+    padding: 10px 14px;
+    text-align: left;
+    color: var(--text-dim);
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+  }
+
+  tbody tr {
+    border-bottom: 1px solid var(--border);
+    transition: background 0.1s;
+  }
+
+  tbody tr:hover { background: rgba(255,255,255,0.02); }
+
+  td {
+    padding: 10px 14px;
+    vertical-align: top;
+    color: var(--text);
+  }
+
+  td code {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    background: var(--code-bg);
+    padding: 1px 6px;
+    border-radius: 3px;
+    color: var(--cyan);
+  }
+
+  .port-badge {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+
+  .port-badge.local {
+    background: rgba(76, 175, 80, 0.15);
+    color: var(--green);
+    border: 1px solid rgba(76, 175, 80, 0.3);
+  }
+
+  .port-badge.public {
+    background: rgba(233, 69, 96, 0.15);
+    color: var(--accent);
+    border: 1px solid rgba(233, 69, 96, 0.3);
+  }
+
+  .port-badge.internal {
+    background: rgba(255, 179, 0, 0.15);
+    color: var(--yellow);
+    border: 1px solid rgba(255, 179, 0, 0.3);
+  }
+
+  .port-badge.host-net {
+    background: rgba(83, 52, 131, 0.3);
+    color: #b39ddb;
+    border: 1px solid rgba(83, 52, 131, 0.5);
+  }
+
+  /* ── Code Blocks ───────────────────────────────────────────────────────── */
+  .code-block {
+    position: relative;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin: 12px 0;
+    overflow: hidden;
+  }
+
+  .code-block-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    background: rgba(255,255,255,0.03);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .code-lang {
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  .copy-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 0.72rem;
+    padding: 3px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: var(--font-ui);
+  }
+
+  .copy-btn:hover {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+
+  .copy-btn.copied {
+    background: var(--green);
+    border-color: var(--green);
+    color: #fff;
+  }
+
+  .code-block pre {
+    padding: 16px;
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    line-height: 1.6;
+    color: var(--text);
+  }
+
+  .code-block pre .comment { color: #546e7a; }
+  .code-block pre .cmd     { color: #80cbc4; }
+  .code-block pre .flag    { color: #ffcc80; }
+  .code-block pre .str     { color: #a5d6a7; }
+  .code-block pre .kw      { color: #ce93d8; }
+
+  /* ── Callout Boxes ─────────────────────────────────────────────────────── */
+  .callout {
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin: 16px 0;
+    border-left: 4px solid;
+    font-size: 0.87rem;
+  }
+
+  .callout.warning {
+    background: rgba(255, 179, 0, 0.08);
+    border-color: var(--yellow);
+    color: #ffe082;
+  }
+
+  .callout.danger {
+    background: rgba(244, 67, 54, 0.08);
+    border-color: var(--red);
+    color: #ef9a9a;
+  }
+
+  .callout.info {
+    background: rgba(0, 188, 212, 0.08);
+    border-color: var(--cyan);
+    color: #80deea;
+  }
+
+  .callout.success {
+    background: rgba(76, 175, 80, 0.08);
+    border-color: var(--green);
+    color: #a5d6a7;
+  }
+
+  .callout strong { font-weight: 700; }
+
+  /* ── Security Layers ───────────────────────────────────────────────────── */
+  .layer-list { list-style: none; margin: 16px 0; }
+
+  .layer-list li {
+    display: flex;
+    gap: 16px;
+    padding: 16px;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 10px;
+    align-items: flex-start;
+  }
+
+  .layer-number {
+    flex-shrink: 0;
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 700;
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .layer-content h4 {
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: var(--text-head);
+    margin-bottom: 4px;
+  }
+
+  .layer-content p {
+    font-size: 0.82rem;
+    color: var(--text-dim);
+    margin: 0;
+  }
+
+  /* ── Steps / Quick Start ───────────────────────────────────────────────── */
+  .steps { counter-reset: step; list-style: none; margin: 16px 0; }
+
+  .steps li {
+    counter-increment: step;
+    position: relative;
+    padding: 0 0 24px 56px;
+  }
+
+  .steps li::before {
+    content: counter(step);
+    position: absolute;
+    left: 0; top: 0;
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 700;
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .steps li::after {
+    content: '';
+    position: absolute;
+    left: 17px; top: 36px; bottom: 0;
+    width: 2px;
+    background: var(--border);
+  }
+
+  .steps li:last-child::after { display: none; }
+
+  .steps li h4 {
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: var(--text-head);
+    margin-bottom: 8px;
+    margin-top: 6px;
+  }
+
+  /* ── Troubleshooting ───────────────────────────────────────────────────── */
+  .trouble-section {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+
+  .trouble-section h4 {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--text-head);
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .symptom-tag {
+    display: inline-block;
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: rgba(233,69,96,0.15);
+    color: var(--accent);
+    border: 1px solid rgba(233,69,96,0.3);
+    margin-left: auto;
+  }
+
+  .trouble-section p { font-size: 0.85rem; margin-bottom: 8px; }
+
+  /* ── Env Vars Table ────────────────────────────────────────────────────── */
+  .env-table td:first-child {
+    font-family: var(--font-mono);
+    color: var(--cyan);
+    font-size: 0.8rem;
+    white-space: nowrap;
+  }
+
+  .env-table td:nth-child(2) {
+    font-family: var(--font-mono);
+    color: var(--yellow);
+    font-size: 0.8rem;
+  }
+
+  /* ── Responsive ────────────────────────────────────────────────────────── */
+  @media (max-width: 768px) {
+    :root { --sidebar-w: 0px; }
+    #sidebar { display: none; }
+    #main { margin-left: 0; padding: 24px 16px 60px; }
+    .hero-ascii { font-size: 0.4rem; }
+    .card-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════ SIDEBAR ═══════════════════════════════════ -->
+<aside id="sidebar">
+  <div class="sidebar-logo">
+    <h1>VPS Hardening Suite</h1>
+    <p class="tagline">Urpe Integral Services</p>
+    <span class="version-badge">v1.0 — 2025</span>
+  </div>
+  <nav>
+    <div class="nav-section">Getting Started</div>
+    <a href="#overview">Overview</a>
+    <a href="#quickstart">Quick Start</a>
+
+    <div class="nav-section">Architecture</div>
+    <a href="#architecture">System Architecture</a>
+    <a href="#security-layers">Security Layers</a>
+    <a href="#data-flow">Data Flow</a>
+
+    <div class="nav-section">Services</div>
+    <a href="#services">All Services</a>
+    <a href="#service-ufw" class="sub">UFW</a>
+    <a href="#service-fail2ban" class="sub">Fail2Ban</a>
+    <a href="#service-crowdsec" class="sub">CrowdSec</a>
+    <a href="#service-prometheus" class="sub">Prometheus</a>
+    <a href="#service-grafana" class="sub">Grafana</a>
+    <a href="#service-node-exporter" class="sub">Node Exporter</a>
+    <a href="#service-cadvisor" class="sub">cAdvisor</a>
+    <a href="#service-loki" class="sub">Loki</a>
+    <a href="#service-promtail" class="sub">Promtail</a>
+
+    <div class="nav-section">Reference</div>
+    <a href="#ports">Port Reference</a>
+    <a href="#env-vars">Environment Variables</a>
+    <a href="#health-checks">Health Checks</a>
+
+    <div class="nav-section">Operations</div>
+    <a href="#troubleshooting">Troubleshooting</a>
+  </nav>
+</aside>
+
+<!-- ═══════════════════════════ MAIN CONTENT ══════════════════════════════ -->
+<main id="main">
+
+  <!-- ── Hero ── -->
+  <section id="overview">
+    <div class="hero">
+      <div class="hero-ascii"> ██╗   ██╗██████╗ ███████╗    ██╗  ██╗ █████╗ ██████╗ ██████╗ ███████╗███╗   ██╗██╗███╗   ██╗ ██████╗
+ ██║   ██║██╔══██╗██╔════╝    ██║  ██║██╔══██╗██╔══██╗██╔══██╗██╔════╝████╗  ██║██║████╗  ██║██╔════╝
+ ██║   ██║██████╔╝███████╗    ███████║███████║██████╔╝██║  ██║█████╗  ██╔██╗ ██║██║██╔██╗ ██║██║  ███╗
+ ╚██╗ ██╔╝██╔═══╝ ╚════██║    ██╔══██║██╔══██║██╔══██╗██║  ██║██╔══╝  ██║╚██╗██║██║██║╚██╗██║██║   ██║
+  ╚████╔╝ ██║     ███████║    ██║  ██║██║  ██║██║  ██║██████╔╝███████╗██║ ╚████║██║██║ ╚████║╚██████╔╝
+   ╚═══╝  ╚═╝     ╚══════╝    ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═══╝╚═╝╚═╝  ╚═══╝ ╚═════╝</div>
+      <h2>VPS Hardening Suite</h2>
+      <p>Idempotent, modular Bash automation that transforms a bare Ubuntu/Debian VPS into a hardened, fully observable production server. Installs and wires together a multi-layer security stack (UFW, Fail2Ban, CrowdSec) and a complete observability stack (Prometheus, Grafana, Loki, Node Exporter, cAdvisor, Promtail) in a single command.</p>
+      <div class="hero-badges">
+        <span class="badge"><span class="dot"></span> Ubuntu 20.04+ / Debian 11+</span>
+        <span class="badge"><span class="dot"></span> Idempotent</span>
+        <span class="badge"><span class="dot"></span> Non-interactive mode</span>
+        <span class="badge"><span class="dot"></span> All monitoring on localhost</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Architecture ── -->
+  <section id="architecture">
+    <h2 class="section-title"><span class="icon">🏗️</span>System Architecture</h2>
+    <p>Traffic flows through four hardened layers before reaching any application. The monitoring stack runs entirely in Docker on an isolated bridge network, with all ports bound to <code>127.0.0.1</code>.</p>
+
+    <div class="arch-diagram">Internet ──► [UFW + CrowdSec Bouncer + Fail2Ban] ──► SSHD (hardened)
+                          │
+              ┌───────────▼───────────────────────────────────┐
+              │              HOST SYSTEM                       │
+              │                                               │
+              │  Node Exporter :9100 (host network)           │
+              │         │ metrics                             │
+              │  ┌──────▼──── Docker: monitoring network ──┐  │
+              │  │                                          │  │
+              │  │  Prometheus :9090 ◄─── cadvisor :8080   │  │
+              │  │       │ queries         │ container      │  │
+              │  │  Grafana :3000          │ metrics        │  │
+              │  │       │                                  │  │
+              │  │  Loki :3100 ◄─── Promtail :9080          │  │
+              │  │  (log store)     (ships /var/log/*)      │  │
+              │  └──────────────────────────────────────────┘  │
+              │                                               │
+              │  CrowdSec Agent ──► LAPI :6767               │
+              │  Fail2Ban ──────► iptables DROP               │
+              └───────────────────────────────────────────────┘</div>
+
+    <div class="callout info">
+      <strong>Key design decision:</strong> No monitoring port is exposed to the internet. Access Grafana, Prometheus, and Loki via SSH port forwarding: <code>ssh -L 3000:127.0.0.1:3000 user@VPS_IP</code>
+    </div>
+  </section>
+
+  <!-- ── Security Layers ── -->
+  <section id="security-layers">
+    <h2 class="section-title"><span class="icon">🛡️</span>Security Layers</h2>
+    <ul class="layer-list">
+      <li>
+        <div class="layer-number">1</div>
+        <div class="layer-content">
+          <h4>Network — UFW + CrowdSec</h4>
+          <p>Default-deny inbound policy at the kernel netfilter level. CrowdSec blocks community-flagged IPs before they touch any service. Docker traffic controlled via the DOCKER-USER iptables chain.</p>
+        </div>
+      </li>
+      <li>
+        <div class="layer-number">2</div>
+        <div class="layer-content">
+          <h4>Authentication — SSH + Fail2Ban</h4>
+          <p>Password authentication disabled. ed25519 + RSA host keys, modern ciphers only, MaxAuthTries=3, agent/TCP forwarding disabled. Fail2Ban watches auth.log and bans brute-force IPs after 3 failures.</p>
+        </div>
+      </li>
+      <li>
+        <div class="layer-number">3</div>
+        <div class="layer-content">
+          <h4>Runtime — Docker Isolation</h4>
+          <p>Containers run with least privilege. json-file log driver capped at 10 MB / 3 rotations. Live-restore enabled. No container port exposed on 0.0.0.0.</p>
+        </div>
+      </li>
+      <li>
+        <div class="layer-number">4</div>
+        <div class="layer-content">
+          <h4>Observability — Loki + Promtail</h4>
+          <p>All security events (auth, UFW, Fail2Ban, CrowdSec) shipped to Loki within seconds. Full audit trail queryable in Grafana. Metrics and logs correlatable in a single view.</p>
+        </div>
+      </li>
+    </ul>
+  </section>
+
+  <!-- ── Data Flow ── -->
+  <section id="data-flow">
+    <h2 class="section-title"><span class="icon">🔄</span>Data Flow</h2>
+
+    <h3 class="subsection">Metrics Flow</h3>
+    <div class="arch-diagram">/proc /sys /  ──► Node Exporter :9100 ──► Prometheus :9090 ──► Grafana :3000
+cgroups       ──► cAdvisor :8080 (internal) ──┘
+dockerd       ──► :9323 (experimental) ──────┘</div>
+
+    <h3 class="subsection">Logs Flow</h3>
+    <div class="arch-diagram">/var/log/auth.log         ┐
+/var/log/syslog          │
+/var/log/ufw.log         ├──► Promtail ──► Loki :3100 ──► Grafana (Explore)
+/var/log/fail2ban.log    │
+/var/log/crowdsec*.log   │
+Docker container logs    ┘</div>
+
+    <h3 class="subsection">Security Events Flow</h3>
+    <div class="arch-diagram">SSH brute force ──► auth.log ──┬──► Fail2Ban ──► iptables DROP (chain: f2b-sshd)
+                              └──► CrowdSec ──► LAPI :6767 ──► Bouncer ──► iptables DROP
+                              └──► Promtail ──► Loki (audit trail in Grafana)</div>
+  </section>
+
+  <!-- ── Services ── -->
+  <section id="services">
+    <h2 class="section-title"><span class="icon">⚙️</span>Services</h2>
+    <p>The suite manages 10 services: 3 systemd services on the host and 7 Docker containers in the monitoring stack.</p>
+
+    <div class="card-grid">
+      <div class="card" id="service-ufw">
+        <div class="card-icon">🔥</div>
+        <h4>UFW</h4>
+        <p>Kernel-level packet filtering. Default-deny inbound. Manages SSH, HTTP/HTTPS allowances. Controls Docker traffic via DOCKER-USER chain.</p>
+        <div class="card-meta">
+          <span class="card-port">systemd service</span>
+          <span class="status-dot active">active</span>
+        </div>
+      </div>
+
+      <div class="card" id="service-fail2ban">
+        <div class="card-icon">🚫</div>
+        <h4>Fail2Ban</h4>
+        <p>Log-parsing IPS. Watches auth.log for SSH brute-force. Bans IPs via iptables after 3 failures. Persistent ban database.</p>
+        <div class="card-meta">
+          <span class="card-port">systemd service</span>
+          <span class="status-dot active">active</span>
+        </div>
+      </div>
+
+      <div class="card" id="service-crowdsec">
+        <div class="card-icon">🌐</div>
+        <h4>CrowdSec</h4>
+        <p>Collaborative threat intelligence. Agent + LAPI + Bouncer. Community blocklists updated automatically. LAPI on port 6767 (moved from 8080 to avoid conflict).</p>
+        <div class="card-meta">
+          <span class="card-port">:6767 (LAPI)</span>
+          <span class="status-dot active">active</span>
+        </div>
+      </div>
+
+      <div class="card" id="service-prometheus">
+        <div class="card-icon">📊</div>
+        <h4>Prometheus</h4>
+        <p>Time-series metrics database. Scrapes node-exporter, cAdvisor, Docker daemon. 15-day retention. 15s scrape interval.</p>
+        <div class="card-meta">
+          <span class="card-port">127.0.0.1:9090</span>
+          <span class="status-dot active">docker</span>
+        </div>
+      </div>
+
+      <div class="card" id="service-grafana">
+        <div class="card-icon">📈</div>
+        <h4>Grafana</h4>
+        <p>Unified visualization for Prometheus (metrics) and Loki (logs). Auto-provisioned datasources. Admin password via GRAFANA_PASSWORD env var.</p>
+        <div class="card-meta">
+          <span class="card-port">127.0.0.1:3000</span>
+          <span class="status-dot active">docker</span>
+        </div>
+      </div>
+
+      <div class="card" id="service-node-exporter">
+        <div class="card-icon">🖥️</div>
+        <h4>Node Exporter</h4>
+        <p>Host hardware and OS metrics: CPU, memory, disk I/O, network interfaces, filesystem. Runs with network_mode: host for accurate NIC stats.</p>
+        <div class="card-meta">
+          <span class="card-port">:9100 (host net)</span>
+          <span class="status-dot host">host network</span>
+        </div>
+      </div>
+
+      <div class="card" id="service-cadvisor">
+        <div class="card-icon">🐳</div>
+        <h4>cAdvisor</h4>
+        <p>Per-container CPU, memory, network, disk metrics. Host port 8081 (internal 8080). Requires privileged mode for cgroup access.</p>
+        <div class="card-meta">
+          <span class="card-port">127.0.0.1:8081</span>
+          <span class="status-dot active">docker</span>
+        </div>
+      </div>
+
+      <div class="card" id="service-loki">
+        <div class="card-icon">📜</div>
+        <h4>Loki</h4>
+        <p>Log aggregation store. Single-binary mode with inmemory kvstore (no Consul needed). TSDB v13 schema. 7-day log retention. 16 MB/s ingestion limit.</p>
+        <div class="card-meta">
+          <span class="card-port">127.0.0.1:3100</span>
+          <span class="status-dot active">docker</span>
+        </div>
+      </div>
+
+      <div class="card" id="service-promtail">
+        <div class="card-icon">🚀</div>
+        <h4>Promtail</h4>
+        <p>Log shipping agent. Tails auth, syslog, kernel, UFW, Fail2Ban, CrowdSec, dpkg, and all Docker container logs. Pushes to Loki via Docker DNS.</p>
+        <div class="card-meta">
+          <span class="card-port">:9080 (internal)</span>
+          <span class="status-dot active">docker</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Port Reference ── -->
+  <section id="ports">
+    <h2 class="section-title"><span class="icon">🔌</span>Port Reference</h2>
+    <p>All monitoring ports are bound to <code>127.0.0.1</code> only. The only publicly exposed port is SSH.</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Service</th>
+            <th>Internal Port</th>
+            <th>Host Binding</th>
+            <th>Exposure</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>SSH (sshd)</td>
+            <td><code>22</code></td>
+            <td><code>0.0.0.0:22</code></td>
+            <td><span class="port-badge public">public</span></td>
+            <td>Protected by UFW, Fail2Ban, CrowdSec</td>
+          </tr>
+          <tr>
+            <td>CrowdSec LAPI</td>
+            <td><code>6767</code></td>
+            <td><code>127.0.0.1:6767</code></td>
+            <td><span class="port-badge local">localhost</span></td>
+            <td>Moved from default 8080 — port conflict avoidance</td>
+          </tr>
+          <tr>
+            <td>Prometheus</td>
+            <td><code>9090</code></td>
+            <td><code>127.0.0.1:9090</code></td>
+            <td><span class="port-badge local">localhost</span></td>
+            <td>15-day TSDB retention</td>
+          </tr>
+          <tr>
+            <td>Grafana</td>
+            <td><code>3000</code></td>
+            <td><code>127.0.0.1:3000</code></td>
+            <td><span class="port-badge local">localhost</span></td>
+            <td>Access via SSH tunnel</td>
+          </tr>
+          <tr>
+            <td>Node Exporter</td>
+            <td><code>9100</code></td>
+            <td>host network</td>
+            <td><span class="port-badge host-net">host-net</span></td>
+            <td>network_mode: host — accurate NIC metrics</td>
+          </tr>
+          <tr>
+            <td>cAdvisor (host port)</td>
+            <td><code>8080</code> (internal)</td>
+            <td><code>127.0.0.1:8081</code></td>
+            <td><span class="port-badge local">localhost</span></td>
+            <td>Host port shifted to 8081 to avoid CrowdSec conflict</td>
+          </tr>
+          <tr>
+            <td>Loki</td>
+            <td><code>3100</code></td>
+            <td><code>127.0.0.1:3100</code></td>
+            <td><span class="port-badge local">localhost</span></td>
+            <td>Log push API + query endpoint</td>
+          </tr>
+          <tr>
+            <td>Promtail</td>
+            <td><code>9080</code></td>
+            <td>Docker bridge only</td>
+            <td><span class="port-badge internal">internal</span></td>
+            <td>Push-only agent; no inbound connections needed</td>
+          </tr>
+          <tr>
+            <td>Docker metrics</td>
+            <td><code>9323</code></td>
+            <td><code>127.0.0.1:9323</code></td>
+            <td><span class="port-badge local">localhost</span></td>
+            <td>Requires experimental: true in daemon.json</td>
+          </tr>
+          <tr>
+            <td>Loki gRPC</td>
+            <td><code>9096</code></td>
+            <td>Docker bridge only</td>
+            <td><span class="port-badge internal">internal</span></td>
+            <td>Internal Loki component communication</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warning">
+      <strong>Port conflict note:</strong> The default CrowdSec LAPI port (8080) conflicts with cAdvisor's internal port (also 8080). This suite resolves the conflict by moving CrowdSec LAPI to <strong>6767</strong> and mapping cAdvisor to host port <strong>8081</strong>. This is defined as the single source of truth in <code>lib/common.sh</code>.
+    </div>
+  </section>
+
+  <!-- ── Quick Start ── -->
+  <section id="quickstart">
+    <h2 class="section-title"><span class="icon">⚡</span>Quick Start</h2>
+
+    <ol class="steps">
+      <li>
+        <h4>Clone the repository</h4>
+        <div class="code-block">
+          <div class="code-block-header">
+            <span class="code-lang">bash</span>
+            <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+          </div>
+          <pre>git clone https://github.com/urpe/vps-hardening-suite.git /opt/vps-hardening-suite
+cd /opt/vps-hardening-suite</pre>
+        </div>
+      </li>
+      <li>
+        <h4>Configure environment variables</h4>
+        <div class="code-block">
+          <div class="code-block-header">
+            <span class="code-lang">bash</span>
+            <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+          </div>
+          <pre>cp .env.example .env
+nano .env
+<span class="comment"># Set at minimum: GRAFANA_PASSWORD, SERVER_DOMAIN</span></pre>
+        </div>
+      </li>
+      <li>
+        <h4>Run the installer as root</h4>
+        <div class="code-block">
+          <div class="code-block-header">
+            <span class="code-lang">bash</span>
+            <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+          </div>
+          <pre>sudo bash install.sh --mode hardcore
+
+<span class="comment"># Non-interactive (CI/agent) mode:</span>
+NONINTERACTIVE=1 sudo bash install.sh --mode hardcore</pre>
+        </div>
+      </li>
+      <li>
+        <h4>Access Grafana via SSH tunnel</h4>
+        <div class="code-block">
+          <div class="code-block-header">
+            <span class="code-lang">bash</span>
+            <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+          </div>
+          <pre><span class="comment"># Forward Grafana + Prometheus to your local machine</span>
+ssh -L 3000:127.0.0.1:3000 -L 9090:127.0.0.1:9090 user@YOUR_VPS_IP
+
+<span class="comment"># Open in browser</span>
+open http://localhost:3000
+<span class="comment"># Login: admin / your GRAFANA_PASSWORD</span></pre>
+        </div>
+      </li>
+    </ol>
+
+    <h3 class="subsection">Installation Modes</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Mode</th><th>What It Installs</th><th>Use Case</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>basic</code></td>
+            <td>UFW + SSH hardening</td>
+            <td>Minimal footprint, no extra stack</td>
+          </tr>
+          <tr>
+            <td><code>intermediate</code></td>
+            <td>basic + Fail2Ban + CrowdSec</td>
+            <td>Active threat response without containers</td>
+          </tr>
+          <tr>
+            <td><code>hardcore</code></td>
+            <td>intermediate + full Docker monitoring stack</td>
+            <td>Production VPS with full observability</td>
+          </tr>
+          <tr>
+            <td><code>custom</code></td>
+            <td>Interactive module selector</td>
+            <td>Advanced users, partial upgrades</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Env Vars ── -->
+  <section id="env-vars">
+    <h2 class="section-title"><span class="icon">⚙️</span>Environment Variables</h2>
+    <p>Copy <code>.env.example</code> to <code>.env</code> and configure before running the installer.</p>
+    <div class="table-wrap">
+      <table class="env-table">
+        <thead>
+          <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>GRAFANA_PASSWORD</td>
+            <td>admin</td>
+            <td>Grafana admin password — change this before deploying</td>
+          </tr>
+          <tr>
+            <td>SERVER_DOMAIN</td>
+            <td>localhost</td>
+            <td>Public hostname or IP for Grafana server config</td>
+          </tr>
+          <tr>
+            <td>SSH_PORT</td>
+            <td>22</td>
+            <td>SSH listen port — installer updates UFW + sshd_config</td>
+          </tr>
+          <tr>
+            <td>SSH_USER</td>
+            <td>(current user)</td>
+            <td>Non-root user to authorize for key-based SSH</td>
+          </tr>
+          <tr>
+            <td>NONINTERACTIVE</td>
+            <td>0</td>
+            <td>Set to 1 to skip all prompts (CI/agent mode)</td>
+          </tr>
+          <tr>
+            <td>INSTALL_MODE</td>
+            <td>hardcore</td>
+            <td>One of: basic, intermediate, hardcore, custom</td>
+          </tr>
+          <tr>
+            <td>CROWDSEC_LAPI_PORT</td>
+            <td>6767</td>
+            <td>CrowdSec LAPI listen port (default avoids 8080 conflict)</td>
+          </tr>
+          <tr>
+            <td>MONITORING_DIR</td>
+            <td>/opt/monitoring</td>
+            <td>Deployment directory for monitoring stack files</td>
+          </tr>
+          <tr>
+            <td>BACKUP_CONFIGS</td>
+            <td>1</td>
+            <td>Set to 0 to skip pre-modification backups (not recommended)</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Health Checks ── -->
+  <section id="health-checks">
+    <h2 class="section-title"><span class="icon">💚</span>Service Health Checks</h2>
+    <p>Run these commands on the VPS to verify each service is healthy after installation.</p>
+
+    <h3 class="subsection">Core Security Services</h3>
+    <div class="code-block">
+      <div class="code-block-header">
+        <span class="code-lang">bash</span>
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+      </div>
+      <pre><span class="comment"># All at once</span>
+systemctl status docker fail2ban crowdsec ufw
+
+<span class="comment"># UFW</span>
+ufw status verbose
+
+<span class="comment"># Fail2Ban jails</span>
+fail2ban-client status
+
+<span class="comment"># CrowdSec decisions and machines</span>
+cscli decisions list
+cscli machines list</pre>
+    </div>
+
+    <h3 class="subsection">Monitoring Stack</h3>
+    <div class="code-block">
+      <div class="code-block-header">
+        <span class="code-lang">bash</span>
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+      </div>
+      <pre><span class="comment"># Container status overview</span>
+docker compose -f /opt/monitoring/docker-compose.yml ps
+
+<span class="comment"># Prometheus</span>
+curl -s http://localhost:9090/-/healthy
+curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[].health'
+
+<span class="comment"># Loki</span>
+curl -s http://localhost:3100/ready
+
+<span class="comment"># Node Exporter</span>
+curl -s http://localhost:9100/metrics | head -5
+
+<span class="comment"># cAdvisor</span>
+curl -s http://localhost:8081/healthz</pre>
+    </div>
+
+    <h3 class="subsection">Installer State</h3>
+    <div class="code-block">
+      <div class="code-block-header">
+        <span class="code-lang">bash</span>
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+      </div>
+      <pre><span class="comment"># View all completed modules</span>
+cat /var/lib/vps-hardening/state.json | jq '
+  to_entries
+  | map(select(.key | startswith("module_")))
+  | from_entries'
+
+<span class="comment"># View installer log</span>
+tail -50 /var/log/vps-hardening/install.log</pre>
+    </div>
+  </section>
+
+  <!-- ── Troubleshooting ── -->
+  <section id="troubleshooting">
+    <h2 class="section-title"><span class="icon">🔧</span>Troubleshooting</h2>
+    <p>Quick reference for the most common issues. See <code>docs/TROUBLESHOOTING.md</code> for the full runbook with root cause analysis and step-by-step fixes.</p>
+
+    <div class="trouble-section">
+      <h4>Can't SSH in after installation <span class="symptom-tag">SSH</span></h4>
+      <p><strong>Check:</strong> Is your IP banned by CrowdSec or Fail2Ban? Is the SSH port correct in UFW?</p>
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-lang">bash (VPS console)</span>
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        </div>
+        <pre>cscli decisions list | grep YOUR_IP
+fail2ban-client status sshd
+ufw status verbose | grep ssh
+ss -tlnp | grep sshd</pre>
+      </div>
+    </div>
+
+    <div class="trouble-section">
+      <h4>Loki crashes on startup — ring / consul error <span class="symptom-tag">CRITICAL</span></h4>
+      <p><strong>This is the most common issue.</strong> Default Loki config expects a Consul cluster or memberlist gossip ring. On a single-node VPS neither exists, so Loki times out and exits.</p>
+      <p><strong>Fix:</strong> Ensure <code>loki-config.yml</code> contains <code>kvstore: store: inmemory</code> in the <code>common.ring</code> section. This is already set correctly in the suite's default config.</p>
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-lang">bash</span>
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        </div>
+        <pre>grep -A3 "kvstore" /opt/monitoring/loki/loki-config.yml
+<span class="comment"># Must show: store: inmemory</span>
+
+docker logs loki --tail 30
+curl -s http://localhost:3100/ready</pre>
+      </div>
+    </div>
+
+    <div class="trouble-section">
+      <h4>CrowdSec fails to start — port 8080 in use <span class="symptom-tag">PORT CONFLICT</span></h4>
+      <p>CrowdSec's default LAPI port (8080) conflicts with cAdvisor's internal port. This suite moves CrowdSec LAPI to 6767.</p>
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-lang">bash</span>
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        </div>
+        <pre>ss -tlnp | grep :8080
+grep "listen_uri" /etc/crowdsec/config.yaml
+<span class="comment"># Should be: listen_uri: 127.0.0.1:6767</span>
+
+<span class="comment"># Fix if still showing 8080:</span>
+sed -i 's|127.0.0.1:8080|127.0.0.1:6767|g' /etc/crowdsec/config.yaml
+systemctl restart crowdsec</pre>
+      </div>
+    </div>
+
+    <div class="trouble-section">
+      <h4>Grafana shows "No Data" <span class="symptom-tag">GRAFANA</span></h4>
+      <p>Check datasource URL — it must use Docker DNS name <code>prometheus:9090</code>, not <code>localhost:9090</code>. Grafana runs inside Docker; <code>localhost</code> resolves to the container itself.</p>
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-lang">bash</span>
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        </div>
+        <pre>docker exec grafana wget -qO- http://prometheus:9090/-/healthy
+docker exec grafana wget -qO- http://loki:3100/ready
+cat /opt/monitoring/grafana/provisioning/datasources/datasources.yml</pre>
+      </div>
+    </div>
+
+    <div class="trouble-section">
+      <h4>Prometheus target DOWN <span class="symptom-tag">PROMETHEUS</span></h4>
+      <p>Check scrape address: node-exporter uses <code>localhost:9100</code> (host network), cAdvisor uses <code>cadvisor:8080</code> (Docker internal DNS, not the host port 8081).</p>
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-lang">bash</span>
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        </div>
+        <pre>curl -s http://localhost:9090/api/v1/targets \
+  | jq '.data.activeTargets[] | select(.health != "up") | {job: .labels.job, lastError}'
+
+curl -s http://localhost:9100/metrics | head -3
+curl -s http://localhost:8081/metrics | head -3</pre>
+      </div>
+    </div>
+
+    <div class="callout info">
+      <strong>Full troubleshooting guide:</strong> See <code>docs/TROUBLESHOOTING.md</code> for all issues with symptoms, diagnostic commands, root cause analysis, and complete fixes — including SSH, Docker, Fail2Ban, UFW, and all monitoring components.
+    </div>
+  </section>
+
+  <!-- ── Footer ── -->
+  <footer style="margin-top: 64px; padding-top: 24px; border-top: 1px solid var(--border); color: var(--text-dim); font-size: 0.8rem;">
+    <p>VPS Hardening Suite — Urpe Integral Services — 2025</p>
+    <p style="margin-top: 4px;">Author: Maximiliano Arango &lt;ma@urpeailab.com&gt; | License: MIT</p>
+    <p style="margin-top: 4px;">For AI agents: primary technical reference is <code>docs/ARCHITECTURE.md</code>. State file: <code>/var/lib/vps-hardening/state.json</code>. Shared library: <code>lib/common.sh</code>.</p>
+  </footer>
+
+</main>
+
+<script>
+  // Copy button functionality
+  function copyCode(btn) {
+    const pre = btn.closest('.code-block').querySelector('pre');
+    const text = pre.innerText;
+    navigator.clipboard.writeText(text).then(() => {
+      btn.textContent = 'Copied!';
+      btn.classList.add('copied');
+      setTimeout(() => {
+        btn.textContent = 'Copy';
+        btn.classList.remove('copied');
+      }, 2000);
+    }).catch(() => {
+      // Fallback for older browsers
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      btn.textContent = 'Copied!';
+      btn.classList.add('copied');
+      setTimeout(() => {
+        btn.textContent = 'Copy';
+        btn.classList.remove('copied');
+      }, 2000);
+    });
+  }
+
+  // Active sidebar link tracking
+  const sections = document.querySelectorAll('section[id], div[id]');
+  const navLinks = document.querySelectorAll('nav a[href^="#"]');
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        const id = entry.target.id;
+        navLinks.forEach(link => {
+          link.classList.toggle('active', link.getAttribute('href') === '#' + id);
+        });
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+
+  sections.forEach(sec => observer.observe(sec));
+</script>
+
+</body>
+</html>

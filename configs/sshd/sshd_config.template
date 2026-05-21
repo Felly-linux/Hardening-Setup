@@ -1,0 +1,107 @@
+# =============================================================================
+# /etc/ssh/sshd_config — VPS Hardening Suite template
+# =============================================================================
+# Template variables replaced by modules/03_ssh.sh at deploy time:
+#   {{SSH_PORT}}           — SSH listening port (e.g. 2222)
+#   {{PASSWORD_AUTH}}      — 'yes' if no SSH key set, 'no' if key is present
+#   {{TCP_FORWARDING}}     — 'yes' or 'no'
+#   {{ALLOW_USERS}}        — optional AllowUsers directive value
+# =============================================================================
+
+# ── Daemon basics ────────────────────────────────────────────────────────────
+Port            {{SSH_PORT}}
+AddressFamily   any
+# ListenAddress 0.0.0.0  # Uncomment to bind to a specific IP
+# ListenAddress ::
+
+# ── Host keys (strong keys only — DSA/ECDSA removed by hardening module) ─────
+HostKey /etc/ssh/ssh_host_ed25519_key
+HostKey /etc/ssh/ssh_host_rsa_key
+
+# ── Authentication ───────────────────────────────────────────────────────────
+# Drop unauthenticated connections after 30 seconds
+LoginGraceTime              30
+
+# Never allow direct root login
+PermitRootLogin             no
+
+# Check permissions of authorized_keys / .ssh directory
+StrictModes                 yes
+
+# Limit brute-force: 3 failures → disconnect
+MaxAuthTries                3
+
+# Max simultaneous SSH sessions per connection
+MaxSessions                 3
+
+# Throttle unauthenticated connections: 10 max, 30% drop chance, 60 hard cap
+MaxStartups                 10:30:60
+
+# Public key is the preferred (and safest) authentication method
+PubkeyAuthentication        yes
+AuthorizedKeysFile          .ssh/authorized_keys
+
+# Password auth: only enabled if no SSH key was configured
+PasswordAuthentication      {{PASSWORD_AUTH}}
+PermitEmptyPasswords        no
+
+# Disable keyboard-interactive (PAM steps handled via UsePAM)
+# ChallengeResponseAuthentication removed: deprecated in OpenSSH 8.7+
+KbdInteractiveAuthentication    no
+
+# Disable Kerberos and GSSAPI (not used in typical VPS environments)
+KerberosAuthentication      no
+GSSAPIAuthentication        no
+
+# Enable PAM for account and session management (required for pam_faillock etc.)
+UsePAM                      yes
+
+# ── Network / forwarding ─────────────────────────────────────────────────────
+# Disable forwarding features that are rarely needed and open attack surface
+AllowAgentForwarding        no
+AllowTcpForwarding          {{TCP_FORWARDING}}
+X11Forwarding               no
+PermitTunnel                no
+GatewayPorts                no
+
+# Keep-alive: ping every 5 minutes, disconnect after 2 missed pings (10 min total)
+TCPKeepAlive                yes
+ClientAliveInterval         300
+ClientAliveCountMax         2
+
+# Don't trust client-supplied env variables
+PermitUserEnvironment       no
+PermitUserRC                no
+
+# ── User / group access control ──────────────────────────────────────────────
+# Uncomment to restrict SSH to specific users or groups:
+# AllowUsers {{ALLOW_USERS}}
+# AllowGroups sudo sshusers
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+SyslogFacility              AUTH
+# VERBOSE logs the public key fingerprint used for authentication
+LogLevel                    VERBOSE
+PrintMotd                   no
+PrintLastLog                yes
+
+# ── Banner ───────────────────────────────────────────────────────────────────
+# Shown before authentication — legal notice
+Banner /etc/ssh/banner
+
+# ── Modern cryptography only (disable CBC, MD5, SHA-1) ───────────────────────
+# Key Exchange: only curve25519 and large DH groups
+KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512
+
+# Host Key Algorithms: ed25519 preferred, RSA-SHA2 fallback
+HostKeyAlgorithms ssh-ed25519,rsa-sha2-512,rsa-sha2-256
+
+# Symmetric Ciphers: ChaCha20 and AES-GCM only (no CBC)
+Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr
+
+# MACs: Encrypt-then-MAC variants only
+MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,umac-128-etm@openssh.com
+
+# ── Subsystem ────────────────────────────────────────────────────────────────
+# SFTP with auditing enabled
+Subsystem sftp /usr/lib/openssh/sftp-server -f AUTHPRIV -l INFO

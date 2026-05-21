@@ -1,0 +1,85 @@
+# =============================================================================
+# Loki configuration — VPS Hardening Suite
+# =============================================================================
+# Single-instance / monolithic mode (no distributed components needed).
+# Storage: local filesystem inside the named Docker volume 'loki_data' → /loki
+# Log retention: 30 days (720h)
+# Listens on: 0.0.0.0:3100 inside the container (host-mapped to 127.0.0.1:3100)
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+
+# ---------------------------------------------------------------------------
+# Common defaults shared by all components
+# ---------------------------------------------------------------------------
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory:  /loki/rules
+  replication_factor: 1
+  ring:
+    instance_addr: 127.0.0.1
+    kvstore:
+      store: inmemory   # single-node: no distributed KV needed
+
+# ---------------------------------------------------------------------------
+# Schema
+# ---------------------------------------------------------------------------
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+# ---------------------------------------------------------------------------
+# Chunk cache (in-process)
+# ---------------------------------------------------------------------------
+chunk_store_config:
+  chunk_cache_config:
+    embedded_cache:
+      enabled:     true
+      max_size_mb: 100
+
+# ---------------------------------------------------------------------------
+# Query range cache
+# ---------------------------------------------------------------------------
+query_range:
+  results_cache:
+    cache:
+      embedded_cache:
+        enabled:     true
+        max_size_mb: 100
+
+# ---------------------------------------------------------------------------
+# Compactor — merges TSDB index files, runs every 10 m
+# ---------------------------------------------------------------------------
+compactor:
+  working_directory: /loki/compactor
+  compaction_interval: 10m
+  retention_enabled: true
+  retention_delete_delay: 2h
+  retention_delete_worker_count: 150
+  delete_request_store: filesystem
+
+limits_config:
+  # Enforce 30-day log retention
+  retention_period: 720h
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+  ingestion_rate_mb: 16
+  ingestion_burst_size_mb: 32
+  max_streams_per_user: 10000
+  max_line_size: 65536
+  max_label_names_per_series: 30
+
+analytics:
+  reporting_enabled: false

@@ -1,0 +1,15 @@
+# Grafana dashboard provisioning — vps-hardening-suite
+# Grafana loads JSON dashboards from /var/lib/grafana/dashboards at startup
+# and re-checks every updateIntervalSeconds seconds for changes.
+apiVersion: 1
+
+providers:
+  - name:                  'default'
+    orgId:                 1
+    folder:                'VPS Monitor'
+    type:                  file
+    disableDeletion:       false
+    updateIntervalSeconds: 30
+    allowUiUpdates:        true
+    options:
+      path: /var/lib/grafana/dashboards

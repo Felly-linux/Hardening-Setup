@@ -1,0 +1,21 @@
+# Runtime-generated — never commit
+backups/*
+!backups/.gitkeep
+logs/*
+!logs/.gitkeep
+docs/installation_report_*.md
+
+# Secrets
+.env
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Shell generated
+*.bak
