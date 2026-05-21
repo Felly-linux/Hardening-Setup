@@ -1,46 +1,37 @@
 #!/usr/bin/env bash
 # =============================================================================
-# modules/06_crowdsec.sh — CrowdSec collaborative intrusion prevention
+# modules/crowdsec.sh — CrowdSec collaborative intrusion prevention
 # =============================================================================
-# CrowdSec is a modern, collaborative IPS that uses a crowd-sourced threat
-# intelligence database to block known malicious IPs across the community.
-#
-# Architecture:
-#   CrowdSec agent  — reads logs, detects attacks, calls LAPI
-#   LAPI (Local API)— coordinator between agents and bouncers
-#   Bouncer         — enforces bans (iptables-based)
-#   cscli           — management CLI
-#
-# Port strategy:
-#   Default LAPI port is 8080. If port 8080 is in use, we reconfigure
-#   to use our non-conflicting port: 6767 (PORT_CROWDSEC_LAPI constant).
-#
-# Collections installed:
-#   crowdsecurity/linux   — base Linux detection rules
-#   crowdsecurity/sshd    — SSH brute force detection
-#   crowdsecurity/nginx   — Optional, if nginx is installed
-#
-# Steps:
-#   1.  Check port 8080 availability
-#   2.  Add CrowdSec APT repository
-#   3.  Install crowdsec and crowdsec-firewall-bouncer-iptables
-#   4.  Configure LAPI port if needed
-#   5.  Install collections
-#   6.  Start and enable services
-#   7.  Register with crowdsec LAPI
-#   8.  Verify installation
-#
-# State keys written:
-#   crowdsec_installed  — "yes"
-#   crowdsec_lapi_port  — the configured LAPI port
+# THREAT MODEL:
+#   Mitigates: Known-malicious IPs, coordinated attacks, tor exit nodes,
+#              bot networks — using crowd-sourced threat intelligence
+#   Attack surface reduced: Blocks entire IPs at iptables/nftables before
+#                           they reach application layer
+#   Operational impact: Risk of banning legitimate IPs if community signals
+#                       incorrect; keep out-of-band console access ready
+#   Can break: Nothing by default — CrowdSec only blocks IPs that have
+#              triggered community alerts; false positives can be whitelisted
+#   Note: Works alongside Fail2Ban — both operate independently (defense in
+#         depth). CrowdSec catches known-bad IPs proactively; Fail2Ban catches
+#         new brute-force attempts reactively.
+#   Compatible with: Ubuntu 20.04+, Debian 11+
 # =============================================================================
 set -euo pipefail
 
 [[ -n "${_MODULE_CROWDSEC_LOADED:-}" ]] && return 0
 readonly _MODULE_CROWDSEC_LOADED=1
 
-# The LAPI port we want to use (from common.sh constant)
-_CROWDSEC_TARGET_PORT="${PORT_CROWDSEC_LAPI}"  # 6767
+if [[ -z "${_VPS_HARDENING_COMMON_LOADED:-}" ]]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    # shellcheck source=../lib/common.sh
+    source "${SCRIPT_DIR}/../lib/common.sh"
+fi
+
+# =============================================================================
+# Profile variables with safe defaults
+# =============================================================================
+# Port 6767 avoids conflicts with cAdvisor (8080), Grafana (3000), etc.
+CROWDSEC_LAPI_PORT="${CROWDSEC_LAPI_PORT:-${PORT_CROWDSEC_LAPI:-6767}}"
 
 # ---------------------------------------------------------------------------
 # run_crowdsec — Main entry point
@@ -49,8 +40,8 @@ run_crowdsec() {
     log_section "CROWDSEC INSTALLATION"
 
     log_step 1 8 "Checking port availability"
-    local lapi_port
-    lapi_port="$(_crowdsec_determine_port)"
+    local lapi_port="${CROWDSEC_LAPI_PORT}"
+    log_info "CrowdSec LAPI will use port ${lapi_port}."
 
     log_step 2 8 "Adding CrowdSec APT repository"
     _crowdsec_add_repo
@@ -75,25 +66,11 @@ run_crowdsec() {
 
     save_state "crowdsec_installed" "yes"
     save_state "crowdsec_lapi_port" "$lapi_port"
-
     log_success "CrowdSec installed and configured on LAPI port ${lapi_port}."
 }
 
 # ---------------------------------------------------------------------------
-# _crowdsec_determine_port — Check if 8080 is free; use 6767 otherwise
-# ---------------------------------------------------------------------------
-_crowdsec_determine_port() {
-    if port_in_use 8080; then
-        log_warning "Port 8080 is in use. CrowdSec LAPI will be configured on port ${_CROWDSEC_TARGET_PORT}."
-        echo "${_CROWDSEC_TARGET_PORT}"
-    else
-        log_info "Port 8080 is free, but using ${_CROWDSEC_TARGET_PORT} to avoid future conflicts."
-        echo "${_CROWDSEC_TARGET_PORT}"
-    fi
-}
-
-# ---------------------------------------------------------------------------
-# _crowdsec_add_repo — Add the official CrowdSec APT repository
+# _crowdsec_add_repo
 # ---------------------------------------------------------------------------
 _crowdsec_add_repo() {
     if [[ -f /etc/apt/sources.list.d/crowdsec_crowdsec.list ]] \
@@ -102,9 +79,12 @@ _crowdsec_add_repo() {
         return 0
     fi
 
-    log_info "Adding CrowdSec repository..."
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then
+        log_info "[DRY-RUN] Would add CrowdSec APT repository."
+        return 0
+    fi
 
-    # Download and install the repo setup script
+    log_info "Adding CrowdSec repository..."
     local setup_script
     setup_script="$(mktemp /tmp/crowdsec_install.XXXXXX.sh)"
     trap 'rm -f "$setup_script"' RETURN
@@ -114,7 +94,6 @@ _crowdsec_add_repo() {
         bash "$setup_script" >> "$LOG_FILE" 2>&1
         log_success "CrowdSec repository added via packagecloud."
     else
-        # Fallback: add manually using GPG key and sources.list entry
         log_warning "Failed to fetch repo script; trying manual method..."
         _crowdsec_add_repo_manual
     fi
@@ -123,21 +102,17 @@ _crowdsec_add_repo() {
 }
 
 # ---------------------------------------------------------------------------
-# _crowdsec_add_repo_manual — Manual fallback GPG + sources.list method
+# _crowdsec_add_repo_manual — GPG key + sources.list fallback
 # ---------------------------------------------------------------------------
 _crowdsec_add_repo_manual() {
     local keyring_path="/usr/share/keyrings/crowdsec-archive-keyring.gpg"
-
-    # Download GPG key
     curl -sf "https://packagecloud.io/crowdsec/crowdsec/gpgkey" \
         | gpg --dearmor -o "$keyring_path"
-
     chmod 644 "$keyring_path"
 
-    # Add sources.list entry
-    local arch
+    local arch codename
     arch="$(dpkg --print-architecture)"
-    local codename="${OS_CODENAME:-$(lsb_release -cs 2>/dev/null || echo focal)}"
+    codename="${OS_CODENAME:-$(lsb_release -cs 2>/dev/null || echo focal)}"
 
     cat > /etc/apt/sources.list.d/crowdsec.list << EOF
 # CrowdSec repository — added by VPS Hardening Suite
@@ -149,35 +124,40 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# _crowdsec_install — Install crowdsec and the firewall bouncer
+# _crowdsec_install
 # ---------------------------------------------------------------------------
 _crowdsec_install() {
     if command_exists cscli && command_exists crowdsec; then
-        log_info "CrowdSec is already installed."
-        # Still install bouncer if missing
-        if ! command_exists crowdsec-firewall-bouncer; then
-            log_info "Installing firewall bouncer..."
+        log_info "CrowdSec already installed."
+        if ! command_exists crowdsec-firewall-bouncer && [[ "${DRY_RUN:-0}" != "1" ]]; then
             DEBIAN_FRONTEND=noninteractive apt-get install -y \
                 crowdsec-firewall-bouncer-iptables >> "$LOG_FILE" 2>&1
         fi
         return 0
     fi
 
-    log_info "Installing CrowdSec and firewall bouncer..."
-    DEBIAN_FRONTEND=noninteractive apt-get install -y \
-        crowdsec \
-        crowdsec-firewall-bouncer-iptables \
-        >> "$LOG_FILE" 2>&1
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then
+        log_info "[DRY-RUN] Would install crowdsec + crowdsec-firewall-bouncer-iptables."
+        return 0
+    fi
 
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        crowdsec crowdsec-firewall-bouncer-iptables >> "$LOG_FILE" 2>&1
     log_success "CrowdSec packages installed."
 }
 
 # ---------------------------------------------------------------------------
-# _crowdsec_configure_port — Update LAPI listen URI to use our target port
+# _crowdsec_configure_port — Update LAPI listen_uri
 # ---------------------------------------------------------------------------
 _crowdsec_configure_port() {
     local target_port="$1"
     local config_file="/etc/crowdsec/config.yaml"
+    local target_uri="127.0.0.1:${target_port}"
+
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then
+        log_info "[DRY-RUN] Would set CrowdSec LAPI to ${target_uri}."
+        return 0
+    fi
 
     if [[ ! -f "$config_file" ]]; then
         log_error "CrowdSec config not found: ${config_file}"
@@ -186,125 +166,110 @@ _crowdsec_configure_port() {
 
     backup_file "$config_file"
 
-    # Check current listen_uri
     local current_uri
     current_uri="$(grep -oP "listen_uri:\s*\K[^\s]+" "$config_file" 2>/dev/null | head -1 || echo "")"
 
-    local target_uri="127.0.0.1:${target_port}"
-
     if [[ "$current_uri" == "$target_uri" ]]; then
-        log_info "CrowdSec LAPI already configured on ${target_uri}."
+        log_info "LAPI already configured on ${target_uri}."
         return 0
     fi
 
     log_info "Reconfiguring LAPI from '${current_uri}' to '${target_uri}'..."
-
-    # Use sed to update the listen_uri (handles indented YAML lines)
     sed -i "s|listen_uri:.*|listen_uri: ${target_uri}|" "$config_file"
 
-    # Also update the local_api_credentials.yaml if it exists
     local creds_file="/etc/crowdsec/local_api_credentials.yaml"
     if [[ -f "$creds_file" ]]; then
         backup_file "$creds_file"
         sed -i "s|url:.*localhost:[0-9]*|url: http://127.0.0.1:${target_port}|g" "$creds_file"
         sed -i "s|url:.*127\.0\.0\.1:[0-9]*|url: http://127.0.0.1:${target_port}|g" "$creds_file"
-        log_info "Updated local API credentials URL to port ${target_port}."
+        log_info "Updated local API credentials to port ${target_port}."
     fi
 
     log_success "CrowdSec LAPI configured on port ${target_port}."
 }
 
 # ---------------------------------------------------------------------------
-# _crowdsec_install_collections — Install threat detection rules
+# _crowdsec_install_collections — Threat detection rules
 # ---------------------------------------------------------------------------
 _crowdsec_install_collections() {
-    # Ensure cscli is available
     if ! command_exists cscli; then
-        log_warning "cscli not found; skipping collection installation."
+        log_warning "cscli not found; skipping collections."
         return 0
     fi
 
-    # Update Hub index first
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then
+        log_info "[DRY-RUN] Would install collections: crowdsecurity/linux, crowdsecurity/sshd, crowdsecurity/linux-lpe."
+        return 0
+    fi
+
     log_info "Updating CrowdSec Hub index..."
     cscli hub update >> "$LOG_FILE" 2>&1 || true
 
-    # Base collections (always install)
-    local base_collections=(
+    local -a base_collections=(
         "crowdsecurity/linux"
         "crowdsecurity/sshd"
-        "crowdsecurity/linux-lpe"     # Linux privilege escalation
+        "crowdsecurity/linux-lpe"
     )
 
-    log_info "Installing base collections..."
     for collection in "${base_collections[@]}"; do
         if cscli collections list 2>/dev/null | grep -q "${collection##*/}"; then
             log_info "  Already installed: ${collection}"
         else
             cscli collections install "$collection" >> "$LOG_FILE" 2>&1 \
                 && log_success "  Installed: ${collection}" \
-                || log_warning "  Failed to install: ${collection}"
+                || log_warning "  Failed: ${collection}"
         fi
     done
 
-    # Optional: nginx collection
     if command_exists nginx || package_installed nginx; then
-        log_info "Nginx detected — installing nginx CrowdSec collection..."
-        cscli collections install crowdsecurity/nginx >> "$LOG_FILE" 2>&1 \
-            && log_success "  Installed: crowdsecurity/nginx" \
-            || log_warning "  Failed to install nginx collection."
-    else
-        if confirm "Install nginx CrowdSec collection? (useful if you plan to install nginx)" "n"; then
-            cscli collections install crowdsecurity/nginx >> "$LOG_FILE" 2>&1 || true
-        fi
+        cscli collections install crowdsecurity/nginx >> "$LOG_FILE" 2>&1 || true
+        log_success "  Installed: crowdsecurity/nginx"
     fi
 
-    # Optional: docker collection
     if command_exists docker; then
-        log_info "Docker detected — installing docker CrowdSec collection..."
-        cscli collections install crowdsecurity/docker >> "$LOG_FILE" 2>&1 \
-            && log_success "  Installed: crowdsecurity/docker" \
-            || true
+        cscli collections install crowdsecurity/docker >> "$LOG_FILE" 2>&1 || true
+        log_success "  Installed: crowdsecurity/docker"
     fi
 
-    # Apply hub upgrade (install latest versions)
     cscli hub upgrade >> "$LOG_FILE" 2>&1 || true
-
     log_success "CrowdSec collections installed."
 }
 
 # ---------------------------------------------------------------------------
-# _crowdsec_start_services — Enable and start crowdsec
+# _crowdsec_start_services
 # ---------------------------------------------------------------------------
 _crowdsec_start_services() {
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then
+        log_info "[DRY-RUN] Would enable + restart crowdsec."
+        return 0
+    fi
     systemctl enable crowdsec >> "$LOG_FILE" 2>&1
     systemctl restart crowdsec >> "$LOG_FILE" 2>&1
-
     wait_for_service "crowdsec" 45
     log_success "CrowdSec service started."
 }
 
 # ---------------------------------------------------------------------------
-# _crowdsec_configure_bouncer — Set up firewall bouncer to call our LAPI port
+# _crowdsec_configure_bouncer
 # ---------------------------------------------------------------------------
 _crowdsec_configure_bouncer() {
     local lapi_port="$1"
     local bouncer_config="/etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml"
 
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then
+        log_info "[DRY-RUN] Would configure and register firewall bouncer."
+        return 0
+    fi
+
     if [[ ! -f "$bouncer_config" ]]; then
-        log_warning "Bouncer config not found at ${bouncer_config}. Skipping bouncer config."
+        log_warning "Bouncer config not found at ${bouncer_config}. Skipping."
         return 0
     fi
 
     backup_file "$bouncer_config"
-
-    # Update the API URL to point to our LAPI port
     sed -i "s|api_url:.*|api_url: http://127.0.0.1:${lapi_port}/|" "$bouncer_config"
 
-    # Register the bouncer with the LAPI (generates an API key)
-    log_info "Registering firewall bouncer with CrowdSec LAPI..."
     local bouncer_name="firewall-bouncer-$(hostname -s)"
-
-    # Delete old registration if exists (idempotent)
     cscli bouncers delete "$bouncer_name" >> "$LOG_FILE" 2>&1 || true
 
     local api_key
@@ -312,51 +277,45 @@ _crowdsec_configure_bouncer() {
         | grep -oP '[a-f0-9]{64}' | head -1 || echo "")"
 
     if [[ -n "$api_key" ]]; then
-        # Update bouncer config with the API key
         sed -i "s|api_key:.*|api_key: ${api_key}|" "$bouncer_config"
         log_success "Bouncer registered with API key."
     else
-        log_warning "Could not auto-register bouncer. You may need to run:"
-        log_warning "  cscli bouncers add my-bouncer"
-        log_warning "  and update ${bouncer_config} with the key."
+        log_warning "Could not auto-register bouncer. Run: cscli bouncers add my-bouncer"
     fi
 
-    # Enable and start the bouncer
     systemctl enable crowdsec-firewall-bouncer >> "$LOG_FILE" 2>&1 || true
     systemctl restart crowdsec-firewall-bouncer >> "$LOG_FILE" 2>&1 || true
-    wait_for_service "crowdsec-firewall-bouncer" 20 || log_warning "Bouncer may not have started; check logs."
+    wait_for_service "crowdsec-firewall-bouncer" 20 \
+        || log_warning "Bouncer may not have started; check: systemctl status crowdsec-firewall-bouncer"
 }
 
 # ---------------------------------------------------------------------------
-# _crowdsec_verify — Confirm CrowdSec is working correctly
+# _crowdsec_verify
 # ---------------------------------------------------------------------------
 _crowdsec_verify() {
-    # Wait for CrowdSec to be fully ready
+    [[ "${DRY_RUN:-0}" == "1" ]] && return 0
     sleep 3
 
     log_info "CrowdSec machine list:"
-    echo ""
     cscli machines list 2>/dev/null | while IFS= read -r line; do
         printf "  ${CYAN}│${RESET} %s\n" "$line"
     done
-
     echo ""
+
     log_info "Installed collections:"
     cscli collections list 2>/dev/null | head -20 | while IFS= read -r line; do
         printf "  ${CYAN}│${RESET} %s\n" "$line"
     done
-
     echo ""
+
     log_info "Active bouncers:"
     cscli bouncers list 2>/dev/null | while IFS= read -r line; do
         printf "  ${CYAN}│${RESET} %s\n" "$line"
     done
-
     echo ""
 
-    # Quick health check
     if cscli metrics 2>/dev/null | head -5 | grep -q "crowdsec"; then
-        log_success "CrowdSec is healthy and processing events."
+        log_success "CrowdSec healthy and processing events."
     else
         log_warning "CrowdSec metrics not yet available (may still be initializing)."
     fi

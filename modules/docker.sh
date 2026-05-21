@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# modules/07_docker.sh — Docker CE installation and hardening
+# modules/docker.sh — Docker CE installation and hardening
 # =============================================================================
 # Installs Docker CE from the official Docker APT repository (not the
 # distro-packaged version which may be outdated). Applies a hardened
@@ -30,11 +30,32 @@
 #   docker_installed        — "yes"
 #   docker_version          — installed version
 #   docker_admin_user       — user added to docker group
+#
+# THREAT MODEL:
+#   Mitigates: Container escape via daemon misconfiguration, disk exhaustion
+#              from container logs, inter-container attack paths via ICC
+#   Attack surface reduced: Docker daemon (icc=false, no-new-privileges,
+#                           seccomp enabled, userland-proxy disabled)
+#   Operational impact: icc=false may break containers expecting peer-to-peer
+#                       communication (use explicit Docker networks instead)
+#   Can break: Containers relying on inter-container communication without
+#              named networks; metrics endpoint disabled in non-experimental mode
+#   Compatible with: Ubuntu 20.04+, Debian 11+
 # =============================================================================
+
+# lib/common.sh source guard
+if [[ -z "${_VPS_HARDENING_COMMON_LOADED:-}" ]]; then
+    # shellcheck source=../lib/common.sh
+    source "$(dirname "${BASH_SOURCE[0]}")/../lib/common.sh"
+fi
+
 set -euo pipefail
 
 [[ -n "${_MODULE_DOCKER_LOADED:-}" ]] && return 0
 readonly _MODULE_DOCKER_LOADED=1
+
+# Profile variable declarations
+DOCKER_ENABLED="${DOCKER_ENABLED:-yes}"
 
 # ---------------------------------------------------------------------------
 # run_docker — Main entry point
@@ -83,6 +104,7 @@ run_docker() {
 
     log_success "Docker configured and running."
     save_state "docker_installed" "yes"
+    mark_module_complete "docker"
 }
 
 # ---------------------------------------------------------------------------
@@ -116,8 +138,12 @@ _docker_remove_old_packages() {
 
     for pkg in "${old_packages[@]}"; do
         if package_installed "$pkg"; then
-            DEBIAN_FRONTEND=noninteractive apt-get remove -y "$pkg" >> "$LOG_FILE" 2>&1 || true
-            log_info "  Removed: ${pkg}"
+            if [[ "${DRY_RUN:-0}" != "1" ]]; then
+                DEBIAN_FRONTEND=noninteractive apt-get remove -y "$pkg" >> "$LOG_FILE" 2>&1 || true
+                log_info "  Removed: ${pkg}"
+            else
+                log_info "[DRY-RUN] Would remove old Docker packages."
+            fi
         fi
     done
 }
@@ -130,6 +156,11 @@ _docker_add_gpg_key() {
 
     if [[ -f "$keyring" ]]; then
         log_info "Docker GPG keyring already present."
+        return 0
+    fi
+
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then
+        log_info "[DRY-RUN] Would download and install Docker GPG key to ${keyring}."
         return 0
     fi
 
@@ -168,6 +199,11 @@ _docker_add_repo() {
     local os_id="${OS_ID:-ubuntu}"
     local codename="${OS_CODENAME:-focal}"
 
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then
+        log_info "[DRY-RUN] Would write Docker APT repository to ${sources_file} and run apt-get update."
+        return 0
+    fi
+
     cat > "$sources_file" << EOF
 # Docker official repository — added by VPS Hardening Suite
 deb [arch=${arch} signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/${os_id} ${codename} stable
@@ -191,6 +227,11 @@ _docker_install_packages() {
 
     log_info "Installing Docker packages: ${packages[*]}"
 
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then
+        log_info "[DRY-RUN] Would run: apt-get install -y ${packages[*]}"
+        return 0
+    fi
+
     DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}" >> "$LOG_FILE" 2>&1
 
     local version
@@ -208,6 +249,11 @@ _docker_write_daemon_config() {
 
     if [[ -f "$daemon_conf" ]]; then
         backup_file "$daemon_conf"
+    fi
+
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then
+        log_info "[DRY-RUN] Would write /etc/docker/daemon.json."
+        return 0
     fi
 
     cat > "$daemon_conf" << 'EOF'
@@ -283,9 +329,13 @@ _docker_add_user_to_group() {
     if groups "$admin_user" 2>/dev/null | grep -qw docker; then
         log_info "User '${admin_user}' is already in the docker group."
     else
-        usermod -aG docker "$admin_user"
-        log_success "User '${admin_user}' added to docker group."
-        log_warning "NOTE: User must log out and back in for group membership to take effect."
+        if [[ "${DRY_RUN:-0}" == "1" ]]; then
+            log_info "[DRY-RUN] Would run: usermod -aG docker ${admin_user}"
+        else
+            usermod -aG docker "$admin_user"
+            log_success "User '${admin_user}' added to docker group."
+            log_warning "NOTE: User must log out and back in for group membership to take effect."
+        fi
     fi
 
     save_state "docker_admin_user" "$admin_user"
@@ -297,19 +347,25 @@ _docker_add_user_to_group() {
 _docker_create_monitoring_network() {
     # Ensure Docker is running before creating networks
     if ! service_running docker; then
-        systemctl start docker >> "$LOG_FILE" 2>&1 || true
-        wait_for_service docker 30
+        if [[ "${DRY_RUN:-0}" != "1" ]]; then
+            systemctl start docker >> "$LOG_FILE" 2>&1 || true
+            wait_for_service docker 30
+        fi
     fi
 
     if docker network ls 2>/dev/null | grep -q "\\b${DOCKER_MONITORING_NETWORK}\\b"; then
         log_info "Docker network '${DOCKER_MONITORING_NETWORK}' already exists."
     else
-        docker network create \
-            --driver bridge \
-            --label "managed-by=vps-hardening-suite" \
-            --label "purpose=monitoring" \
-            "$DOCKER_MONITORING_NETWORK" >> "$LOG_FILE" 2>&1
-        log_success "Docker network '${DOCKER_MONITORING_NETWORK}' created."
+        if [[ "${DRY_RUN:-0}" == "1" ]]; then
+            log_info "[DRY-RUN] Would run: docker network create --driver bridge ${DOCKER_MONITORING_NETWORK}"
+        else
+            docker network create \
+                --driver bridge \
+                --label "managed-by=vps-hardening-suite" \
+                --label "purpose=monitoring" \
+                "$DOCKER_MONITORING_NETWORK" >> "$LOG_FILE" 2>&1
+            log_success "Docker network '${DOCKER_MONITORING_NETWORK}' created."
+        fi
     fi
 }
 
@@ -317,6 +373,11 @@ _docker_create_monitoring_network() {
 # _docker_enable_service — Enable and start Docker, apply daemon config
 # ---------------------------------------------------------------------------
 _docker_enable_service() {
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then
+        log_info "[DRY-RUN] Would run: systemctl enable docker containerd && systemctl restart docker"
+        return 0
+    fi
+
     systemctl enable docker   >> "$LOG_FILE" 2>&1
     systemctl enable containerd >> "$LOG_FILE" 2>&1
 
@@ -331,6 +392,11 @@ _docker_enable_service() {
 # _docker_verify — Run basic verification checks
 # ---------------------------------------------------------------------------
 _docker_verify() {
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then
+        log_info "[DRY-RUN] Would run Docker verification."
+        return 0
+    fi
+
     log_info "Docker system info:"
     echo ""
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# modules/08_monitoring.sh — Observability stack deployment
+# modules/monitoring.sh — Observability stack deployment
 # =============================================================================
 # Deploys the full monitoring stack using Docker Compose:
 #
@@ -31,18 +31,37 @@
 # State keys written:
 #   grafana_password    — the Grafana admin password
 #   monitoring_deployed — "yes"
+#
+# THREAT MODEL:
+#   Mitigates: Security blind spots (undetected intrusions, cryptomining,
+#              lateral movement), delayed incident detection
+#   Attack surface reduced: Visibility gaps — Prometheus/Loki/Grafana alert on
+#                           anomalies that would otherwise go unnoticed
+#   Operational impact: Requires Docker; consumes ~512MB RAM for full stack;
+#                       Grafana port 3000 bound to 0.0.0.0 by default (put
+#                       behind auth proxy in production)
+#   Can break: Nothing hardening-related; monitoring is additive
+#   Compatible with: Ubuntu 20.04+, Debian 11+
 # =============================================================================
+
+# lib/common.sh source guard
+if [[ -z "${_VPS_HARDENING_COMMON_LOADED:-}" ]]; then
+    # shellcheck source=../lib/common.sh
+    source "$(dirname "${BASH_SOURCE[0]}")/../lib/common.sh"
+fi
+
 set -euo pipefail
 
 [[ -n "${_MODULE_MONITORING_LOADED:-}" ]] && return 0
 readonly _MODULE_MONITORING_LOADED=1
 
-# Deployment directory (all config lives here)
-readonly _MONITORING_DIR="/opt/monitoring"
+# Profile variable declarations (overridable by caller)
+MONITORING_DIR="${MONITORING_DIR:-/opt/monitoring}"
+GRAFANA_PASSWORD="${GRAFANA_PASSWORD:-}"
 
 # Grafana API retry settings
-readonly _GF_API_MAX_RETRIES=30
-readonly _GF_API_RETRY_SLEEP=5
+_GF_API_MAX_RETRIES=30
+_GF_API_RETRY_SLEEP=5
 
 # ---------------------------------------------------------------------------
 # run_monitoring — Main entry point
@@ -83,12 +102,20 @@ run_monitoring() {
 
     save_state "monitoring_deployed" "yes"
     log_success "Monitoring stack deployed successfully."
+    mark_module_complete "monitoring"
 }
 
 # ---------------------------------------------------------------------------
 # _monitoring_get_grafana_password — Ask user or generate a random password
 # ---------------------------------------------------------------------------
 _monitoring_get_grafana_password() {
+    # If GRAFANA_PASSWORD is set in the environment/profile, use it directly
+    if [[ -n "${GRAFANA_PASSWORD}" ]]; then
+        log_info "Using GRAFANA_PASSWORD from environment."
+        echo "${GRAFANA_PASSWORD}"
+        return 0
+    fi
+
     local existing
     existing="$(get_state "grafana_password" 2>/dev/null || echo "")"
 
@@ -117,17 +144,22 @@ _monitoring_get_grafana_password() {
 # _monitoring_setup_directory — Create /opt/monitoring/ and subdirectories
 # ---------------------------------------------------------------------------
 _monitoring_setup_directory() {
-    mkdir -p "${_MONITORING_DIR}"/{config,data,logs}
-    mkdir -p "${_MONITORING_DIR}/config/"{prometheus,grafana,loki,promtail,alertmanager}
-    mkdir -p "${_MONITORING_DIR}/data/"{prometheus,grafana,loki}
-    mkdir -p "${_MONITORING_DIR}/logs"
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then
+        log_info "[DRY-RUN] Would create ${MONITORING_DIR}/{config,data,logs} and subdirectories."
+        return 0
+    fi
+
+    mkdir -p "${MONITORING_DIR}"/{config,data,logs}
+    mkdir -p "${MONITORING_DIR}/config/"{prometheus,grafana,loki,promtail,alertmanager}
+    mkdir -p "${MONITORING_DIR}/data/"{prometheus,grafana,loki}
+    mkdir -p "${MONITORING_DIR}/logs"
 
     # Fix ownership for Grafana (runs as UID 472)
-    chown -R 472:472 "${_MONITORING_DIR}/data/grafana" 2>/dev/null || true
+    chown -R 472:472 "${MONITORING_DIR}/data/grafana" 2>/dev/null || true
     # Fix ownership for Prometheus (runs as UID 65534)
-    chown -R 65534:65534 "${_MONITORING_DIR}/data/prometheus" 2>/dev/null || true
+    chown -R 65534:65534 "${MONITORING_DIR}/data/prometheus" 2>/dev/null || true
 
-    log_success "Deployment directory created: ${_MONITORING_DIR}"
+    log_success "Deployment directory created: ${MONITORING_DIR}"
 }
 
 # ---------------------------------------------------------------------------
@@ -136,6 +168,11 @@ _monitoring_setup_directory() {
 _monitoring_write_all_configs() {
     local grafana_password="$1"
     local server_ip="$2"
+
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then
+        log_info "[DRY-RUN] Would write Compose and config files."
+        return 0
+    fi
 
     _monitoring_write_compose     "$grafana_password"
     _monitoring_write_prometheus_config
@@ -153,7 +190,7 @@ _monitoring_write_all_configs() {
 _monitoring_write_compose() {
     local grafana_password="$1"
 
-    cat > "${_MONITORING_DIR}/docker-compose.yml" << EOF
+    cat > "${MONITORING_DIR}/docker-compose.yml" << EOF
 # =============================================================================
 # /opt/monitoring/docker-compose.yml
 # VPS Hardening Suite — Full Observability Stack
@@ -180,19 +217,19 @@ volumes:
     driver_opts:
       type: none
       o: bind
-      device: ${_MONITORING_DIR}/data/prometheus
+      device: ${MONITORING_DIR}/data/prometheus
   grafana_data:
     driver: local
     driver_opts:
       type: none
       o: bind
-      device: ${_MONITORING_DIR}/data/grafana
+      device: ${MONITORING_DIR}/data/grafana
   loki_data:
     driver: local
     driver_opts:
       type: none
       o: bind
-      device: ${_MONITORING_DIR}/data/loki
+      device: ${MONITORING_DIR}/data/loki
 
 services:
 
@@ -402,7 +439,7 @@ EOF
 # _monitoring_write_prometheus_config — scrape configuration
 # ---------------------------------------------------------------------------
 _monitoring_write_prometheus_config() {
-    cat > "${_MONITORING_DIR}/config/prometheus/prometheus.yml" << 'EOF'
+    cat > "${MONITORING_DIR}/config/prometheus/prometheus.yml" << 'EOF'
 # =============================================================================
 # Prometheus configuration — VPS Hardening Suite
 # =============================================================================
@@ -488,7 +525,7 @@ EOF
 # _monitoring_write_prometheus_alerts — Security-focused alerting rules
 # ---------------------------------------------------------------------------
 _monitoring_write_prometheus_alerts() {
-    cat > "${_MONITORING_DIR}/config/prometheus/alerts.yml" << 'EOF'
+    cat > "${MONITORING_DIR}/config/prometheus/alerts.yml" << 'EOF'
 # =============================================================================
 # Prometheus alerting rules — VPS Hardening Suite
 # Security and availability focused
@@ -573,7 +610,7 @@ EOF
 # _monitoring_write_loki_config — Loki storage and retention config
 # ---------------------------------------------------------------------------
 _monitoring_write_loki_config() {
-    cat > "${_MONITORING_DIR}/config/loki/loki.yml" << EOF
+    cat > "${MONITORING_DIR}/config/loki/loki.yml" << EOF
 # =============================================================================
 # Loki configuration — VPS Hardening Suite
 # =============================================================================
@@ -659,7 +696,7 @@ _monitoring_write_promtail_config() {
     local ssh_port
     ssh_port="$(get_state "ssh_port" 2>/dev/null || echo "2222")"
 
-    cat > "${_MONITORING_DIR}/config/promtail/promtail.yml" << EOF
+    cat > "${MONITORING_DIR}/config/promtail/promtail.yml" << EOF
 # =============================================================================
 # Promtail configuration — VPS Hardening Suite
 # Collects: system logs, auth logs, fail2ban, crowdsec, Docker containers
@@ -770,10 +807,10 @@ EOF
 # _monitoring_write_grafana_provisioning — Data sources + dashboards provisioning
 # ---------------------------------------------------------------------------
 _monitoring_write_grafana_provisioning() {
-    mkdir -p "${_MONITORING_DIR}/config/grafana/provisioning/"{datasources,dashboards,notifiers}
+    mkdir -p "${MONITORING_DIR}/config/grafana/provisioning/"{datasources,dashboards,notifiers}
 
     # Data sources
-    cat > "${_MONITORING_DIR}/config/grafana/provisioning/datasources/datasources.yml" << 'EOF'
+    cat > "${MONITORING_DIR}/config/grafana/provisioning/datasources/datasources.yml" << 'EOF'
 # Grafana data source provisioning — VPS Hardening Suite
 apiVersion: 1
 
@@ -804,7 +841,7 @@ datasources:
 EOF
 
     # Dashboard provisioning config
-    cat > "${_MONITORING_DIR}/config/grafana/provisioning/dashboards/dashboards.yml" << 'EOF'
+    cat > "${MONITORING_DIR}/config/grafana/provisioning/dashboards/dashboards.yml" << 'EOF'
 # Grafana dashboard provisioning — VPS Hardening Suite
 apiVersion: 1
 
@@ -827,7 +864,7 @@ EOF
     # which maps to /etc/grafana/provisioning/dashboards inside the container.
     local dash_src="${PROJECT_ROOT}/docker/grafana/dashboards"
     if [[ -d "$dash_src" ]]; then
-        local dash_dest="${_MONITORING_DIR}/config/grafana/provisioning/dashboards"
+        local dash_dest="${MONITORING_DIR}/config/grafana/provisioning/dashboards"
         cp "${dash_src}/"*.json "$dash_dest/" 2>/dev/null \
             && log_success "Dashboard JSON files copied: $(ls "${dash_dest}/"*.json 2>/dev/null | wc -l) dashboards." \
             || log_warning "No dashboard JSON files found in ${dash_src}."
@@ -840,7 +877,12 @@ EOF
 # _monitoring_start_stack — Run docker compose up
 # ---------------------------------------------------------------------------
 _monitoring_start_stack() {
-    cd "${_MONITORING_DIR}" || return 1
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then
+        log_info "[DRY-RUN] Would run: docker compose pull && docker compose up -d in ${MONITORING_DIR}"
+        return 0
+    fi
+
+    cd "${MONITORING_DIR}" || return 1
 
     log_info "Pulling Docker images (this may take a few minutes)..."
     docker compose pull >> "$LOG_FILE" 2>&1
@@ -855,6 +897,11 @@ _monitoring_start_stack() {
 # _monitoring_wait_for_health — Poll until all containers report healthy
 # ---------------------------------------------------------------------------
 _monitoring_wait_for_health() {
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then
+        log_info "[DRY-RUN] Would wait for all monitoring containers to become healthy."
+        return 0
+    fi
+
     local max_wait=300
     local elapsed=0
     local interval=5
@@ -887,7 +934,7 @@ _monitoring_wait_for_health() {
 
     if (( elapsed >= max_wait )); then
         log_warning "Some containers may not be fully healthy. Check with: docker compose ps"
-        docker compose -f "${_MONITORING_DIR}/docker-compose.yml" ps 2>&1 | while IFS= read -r line; do
+        docker compose -f "${MONITORING_DIR}/docker-compose.yml" ps 2>&1 | while IFS= read -r line; do
             printf "  %s\n" "$line"
         done
     fi
@@ -901,6 +948,12 @@ _monitoring_wait_for_health() {
 # ---------------------------------------------------------------------------
 _monitoring_configure_grafana() {
     local password="$1"
+
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then
+        log_info "[DRY-RUN] Would configure Grafana via REST API (data sources + dashboards)."
+        return 0
+    fi
+
     local base_url="http://localhost:${PORT_GRAFANA}"
     local auth_header="Authorization: Basic $(echo -n "admin:${password}" | base64)"
 
@@ -1123,9 +1176,9 @@ _monitoring_print_access_info() {
 
     echo ""
     printf "  ${BOLD}Management commands:${RESET}\n"
-    printf "  ${CYAN}cd ${_MONITORING_DIR} && docker compose ps${RESET}\n"
-    printf "  ${CYAN}cd ${_MONITORING_DIR} && docker compose logs -f grafana${RESET}\n"
-    printf "  ${CYAN}cd ${_MONITORING_DIR} && docker compose restart${RESET}\n"
-    printf "  ${CYAN}cd ${_MONITORING_DIR} && docker compose down${RESET}\n"
+    printf "  ${CYAN}cd ${MONITORING_DIR} && docker compose ps${RESET}\n"
+    printf "  ${CYAN}cd ${MONITORING_DIR} && docker compose logs -f grafana${RESET}\n"
+    printf "  ${CYAN}cd ${MONITORING_DIR} && docker compose restart${RESET}\n"
+    printf "  ${CYAN}cd ${MONITORING_DIR} && docker compose down${RESET}\n"
     echo ""
 }

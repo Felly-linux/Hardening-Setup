@@ -34,4 +34,4 @@ Open a **Feature Request** issue before starting significant work. This project 
 
 ## Security Disclosures
 
-Do not open a public issue for security vulnerabilities. Email **ma@urpeailab.com** directly with details.
+Do not open a public issue for security vulnerabilities. Contact **[@fellcrack](https://github.com/fellcrack)** directly via GitHub.

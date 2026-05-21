@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# modules/00_preflight.sh — Pre-flight checks
+# modules/preflight.sh — Pre-flight checks
 # =============================================================================
 # Verifies that the system meets all requirements before the hardening suite
 # makes any changes. Saves detected environment details to the state file so
@@ -28,6 +28,18 @@ set -euo pipefail
 # Guard double-source
 [[ -n "${_MODULE_PREFLIGHT_LOADED:-}" ]] && return 0
 readonly _MODULE_PREFLIGHT_LOADED=1
+
+# Source common library if not already loaded
+if [[ -z "${_VPS_HARDENING_COMMON_LOADED:-}" ]]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    # shellcheck source=../lib/common.sh
+    source "${SCRIPT_DIR}/../lib/common.sh"
+fi
+
+# =============================================================================
+# Profile variables with safe defaults
+# =============================================================================
+DRY_RUN="${DRY_RUN:-0}"
 
 # ---------------------------------------------------------------------------
 # run_preflight — Main entry point called by install.sh
@@ -64,7 +76,11 @@ run_preflight() {
     if (( failures > 0 )); then
         log_error "Pre-flight FAILED with ${failures} critical error(s)."
         log_error "Resolve the issues above and re-run the installer."
-        save_state "preflight_passed" "no"
+        if [[ "${DRY_RUN}" == "1" ]]; then
+            log_info "[DRY-RUN] Would save state: preflight_passed=no"
+        else
+            save_state "preflight_passed" "no"
+        fi
         return 1
     fi
 
@@ -74,8 +90,14 @@ run_preflight() {
         log_success "All pre-flight checks passed."
     fi
 
-    save_state "preflight_passed" "yes"
-    save_state "preflight_time" "$(date --iso-8601=seconds)"
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        log_info "[DRY-RUN] Would save state: preflight_passed=yes"
+    else
+        save_state "preflight_passed" "yes"
+        save_state "preflight_time" "$(date --iso-8601=seconds)"
+    fi
+
+    mark_module_complete "preflight"
 }
 
 # ---------------------------------------------------------------------------
@@ -109,9 +131,13 @@ _check_os() {
             ;;
     esac
 
-    save_state "os_id"       "$OS_ID"
-    save_state "os_version"  "$OS_VERSION"
-    save_state "os_codename" "$OS_CODENAME"
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        log_info "[DRY-RUN] Would save OS state: os_id=${OS_ID} os_version=${OS_VERSION}"
+    else
+        save_state "os_id"       "$OS_ID"
+        save_state "os_version"  "$OS_VERSION"
+        save_state "os_codename" "$OS_CODENAME"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -168,7 +194,9 @@ _check_disk_space() {
     fi
 
     log_success "Disk space: ${available_gb} GB free on / — sufficient."
-    save_state "disk_free_gb" "$available_gb"
+    if [[ "${DRY_RUN}" != "1" ]]; then
+        save_state "disk_free_gb" "$available_gb"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -187,7 +215,9 @@ _check_ram() {
     fi
 
     log_success "RAM: ${total_mb} MB total — sufficient."
-    save_state "ram_total_mb" "$total_mb"
+    if [[ "${DRY_RUN}" != "1" ]]; then
+        save_state "ram_total_mb" "$total_mb"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -206,19 +236,27 @@ _detect_installed_services() {
         local pkg="${services[$name]}"
         if package_installed "$pkg" || command_exists "$pkg"; then
             log_info "  Detected existing: ${name}"
-            save_state "existing_${name}" "yes"
+            if [[ "${DRY_RUN}" != "1" ]]; then
+                save_state "existing_${name}" "yes"
+            fi
         else
             log_info "  Not installed: ${name}"
-            save_state "existing_${name}" "no"
+            if [[ "${DRY_RUN}" != "1" ]]; then
+                save_state "existing_${name}" "no"
+            fi
         fi
     done
 
     # Docker-specific: also check daemon is running
     if command_exists docker && service_running docker; then
         log_info "  Docker daemon is running."
-        save_state "docker_running" "yes"
+        if [[ "${DRY_RUN}" != "1" ]]; then
+            save_state "docker_running" "yes"
+        fi
     else
-        save_state "docker_running" "no"
+        if [[ "${DRY_RUN}" != "1" ]]; then
+            save_state "docker_running" "no"
+        fi
     fi
 }
 
@@ -258,12 +296,16 @@ _scan_port_conflicts() {
             owner="$(ss -tlnp 2>/dev/null | awk -v p=":${port}" '$0 ~ p {print $NF}' | grep -oP '"[^"]+"' | head -1 | tr -d '"' || echo "unknown")"
             status_str="IN USE (${owner:-unknown})"
             status_color="$YELLOW"
-            save_state "port_conflict_${port}" "${owner:-in-use}"
+            if [[ "${DRY_RUN}" != "1" ]]; then
+                save_state "port_conflict_${port}" "${owner:-in-use}"
+            fi
             (( conflict_count++ )) || true
         else
             status_str="free"
             status_color="$GREEN"
-            save_state "port_conflict_${port}" "free"
+            if [[ "${DRY_RUN}" != "1" ]]; then
+                save_state "port_conflict_${port}" "free"
+            fi
         fi
 
         printf "  ${BOLD}%-10s${RESET}  %-30s  ${status_color}%-20s${RESET}\n" \
@@ -277,10 +319,14 @@ _scan_port_conflicts() {
         log_warning "The installer will attempt to remap conflicting ports automatically."
         log_warning "Specifically: if port 8080 is busy, CrowdSec will use port ${PORT_CROWDSEC_LAPI}."
         # Not a hard failure — individual modules handle remapping
-        save_state "port_conflicts_count" "$conflict_count"
+        if [[ "${DRY_RUN}" != "1" ]]; then
+            save_state "port_conflicts_count" "$conflict_count"
+        fi
         return 0
     fi
 
     log_success "No port conflicts detected."
-    save_state "port_conflicts_count" "0"
+    if [[ "${DRY_RUN}" != "1" ]]; then
+        save_state "port_conflicts_count" "0"
+    fi
 }

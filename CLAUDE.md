@@ -4,91 +4,120 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Idempotent, modular Bash automation suite that hardens a bare Ubuntu/Debian VPS. Targets: UFW, Fail2Ban, CrowdSec, SSH, Docker, and a Prometheus/Grafana/Loki monitoring stack.
+Profile-driven, idempotent Bash automation framework that hardens Ubuntu/Debian servers. Targets: UFW, Fail2Ban, CrowdSec, SSH, sysctl kernel params, auditd, filesystem permissions, Docker, and a Prometheus/Grafana/Loki monitoring stack.
 
 ## Running the Installer
 
 ```bash
-# Interactive menu (default)
-sudo bash install.sh
+# Profile-based (primary interface)
+sudo bash install.sh --profile vps
+sudo bash install.sh --profile docker-host
+sudo bash install.sh --profile paranoid
 
-# Non-interactive modes
-sudo bash install.sh --mode=basic          # SSH + UFW + Fail2Ban
-sudo bash install.sh --mode=intermediate   # + CrowdSec + Docker + Monitoring
-sudo bash install.sh --mode=hardcore       # all modules, strictest settings
-sudo bash install.sh --mode=custom         # interactive module picker
+# Preview without changes
+sudo bash install.sh --profile vps --dry-run
 
-# Skip a module
-sudo bash install.sh --skip-module=crowdsec
+# Security audit (read-only score check)
+sudo bash install.sh --audit-only
 
-# Force re-run of already-completed modules
-sudo bash install.sh --force
+# Module override
+sudo bash install.sh --profile vps --module ssh --module firewall
+sudo bash install.sh --profile docker-host --skip-module monitoring
 
-# Fully headless (CI / agent-driven)
-NONINTERACTIVE=1 sudo bash install.sh --mode=intermediate
+# Rollback a module
+sudo bash install.sh --rollback ssh
+
+# Fully headless
+sudo bash install.sh --profile vps --non-interactive --report json
 ```
 
-State is persisted in `/var/lib/vps-hardening/state.json`. Completed modules are skipped automatically unless `--force` is passed. To manually reset a module:
+## Tests
 
 ```bash
-sudo jq 'del(.module_fail2ban, .module_fail2ban_time)' \
-    /var/lib/vps-hardening/state.json > /tmp/s.tmp \
-    && sudo mv /tmp/s.tmp /var/lib/vps-hardening/state.json
+bash tests/run_tests.sh          # all tests
+bash tests/test_shellcheck.sh    # ShellCheck -S warning -x on all .sh files
+bash tests/test_syntax.sh        # bash -n on all .sh files
 ```
 
 ## Architecture
 
+### Profile system
+
+`profiles/NAME.conf` files are sourced by `install.sh` before any module runs. They export bash variables that modules read with safe defaults. Available profiles: `vps`, `docker-host`, `homelab`, `desktop`, `paranoid`.
+
+Profile variable pattern in modules:
+```bash
+SSH_PORT="${SSH_PORT:-22}"   # profile sets it; module reads with default
+```
+
 ### Entry point → modules
 
-`install.sh` sources `lib/common.sh`, then sources each module script on demand. Each module exposes exactly one public function named `run_<id>()` (e.g. `run_fail2ban`). The installer calls that function, checks the exit code, and writes the result to state.
+`install.sh` loads a profile, builds the module list (`ENABLED_MODULES` from profile, overridable via `--module`/`--skip-module`), then for each module: sources the file, calls `run_<id>()`, writes result to state.
 
-Module registry in `install.sh` (order matters — preflight always runs first):
+Module registry order (profile-defined, not hardcoded):
 ```
-preflight → system → users → ssh → firewall → fail2ban → crowdsec → docker → monitoring
+preflight → system → users → ssh → firewall → fail2ban → crowdsec → sysctl → audit → permissions → docker → monitoring
 ```
 
-### Shared library: `lib/common.sh`
+### Shared library: `lib/`
 
-Single source of truth for:
-- **Port constants** — `PORT_GRAFANA=3000`, `PORT_PROMETHEUS=9090`, `PORT_LOKI=3100`, `PORT_NODE_EXPORTER=9100`, `PORT_CADVISOR=8081`, `PORT_CROWDSEC_LAPI=6767`
-- **State I/O** — `save_state key val`, `get_state key`, `mark_module_complete name`, `module_completed name`
-- **Logging** — `log_info`, `log_success`, `log_warning`, `log_error`, `log_section`, `log_step`
-- **System checks** — `command_exists`, `service_running`, `package_installed`, `port_in_use`, `check_root`
-- **UI helpers** — `confirm`, `ask`, `ask_password`, `show_progress`, `print_summary_table`
-- **OS globals** set by `detect_os()` — `OS_ID`, `OS_VERSION`, `OS_CODENAME`
+`lib/common.sh` is a thin loader — it sources the four actual libraries:
 
-All module scripts source `lib/common.sh` implicitly (it is sourced before any module runs in `install.sh`).
+| File | Owns |
+|---|---|
+| `lib/logging.sh` | ANSI colors, `log_info/success/warning/error/section/step`, `print_banner`, `show_progress`, `print_summary_table` |
+| `lib/helpers.sh` | Port constants, OS detection (`detect_os` → `OS_ID/VERSION/CODENAME`), system checks (`command_exists`, `service_running`, `package_installed`, `port_in_use`), state I/O (`save_state`, `get_state`, `mark_module_complete`, `module_completed`), prompts (`confirm`, `ask`, `ask_password`) |
+| `lib/backups.sh` | `backup_file`, `restore_file`, `list_backups`, `run_with_log` |
+| `lib/validation.sh` | `validate_sshd_config`, `validate_sysctl_value`, `validate_ufw_active`, `validate_service_active`, `check_dependencies`, `post_module_verify` |
+
+Port constants (from `lib/helpers.sh`):
+- `PORT_CROWDSEC_LAPI=6767` (moved from default 8080 — cAdvisor conflict)
+- `PORT_PROMETHEUS=9090`, `PORT_GRAFANA=3000`, `PORT_LOKI=3100`
+- `PORT_NODE_EXPORTER=9100`, `PORT_CADVISOR=8081`, `PORT_PROMTAIL=9080`
+
+### DRY_RUN mode
+
+`install.sh --dry-run` exports `DRY_RUN=1`. Every module checks this before any destructive operation:
+```bash
+[[ "${DRY_RUN:-0}" == "1" ]] && { log_info "[DRY-RUN] Would do X."; return 0; }
+```
+
+### Idempotency pattern
+
+Modules check `module_completed "<id>"` at start and return early if done (unless `--force` passed). Packages checked with `package_installed` before `apt-get`. Config files backed up with `backup_file` before modification. Backups in `./backups/` (gitignored, may contain secrets).
 
 ### Monitoring stack
 
-Deployed by `modules/08_monitoring.sh` from `docker/docker-compose.yml` to `/opt/monitoring/`. All services bind to `127.0.0.1` only — never `0.0.0.0`. Access via SSH tunnel:
+Deployed by `modules/monitoring.sh` to `${MONITORING_DIR:-/opt/monitoring}/` via Docker Compose. All services bind to `127.0.0.1`. Access via SSH tunnel:
 
 ```bash
 ssh -L 3000:127.0.0.1:3000 -L 9090:127.0.0.1:9090 user@VPS_IP
 ```
 
-**Node Exporter** uses `network_mode: host` — required for accurate NIC stats. This is intentional.
+**Node Exporter**: `network_mode: host` — required for accurate NIC stats.  
+**cAdvisor**: `privileged: true` — required for cgroup access. Host port `8081` (not 8080) to avoid CrowdSec LAPI conflict.  
+**Loki**: `kvstore: inmemory` + `replication_factor: 1` — mandatory for single-node. Do not change to consul/memberlist.  
+**DOCKER-USER chain**: Docker bypasses UFW by default. `modules/firewall.sh` inserts rules into DOCKER-USER to restore UFW authority.
 
-**cAdvisor** uses `privileged: true` — required for cgroup access. Host port is `8081` (not 8080) to avoid the CrowdSec LAPI default conflict.
+### CrowdSec LAPI port
 
-**CrowdSec LAPI** listens on `127.0.0.1:6767` — moved from default `0.0.0.0:8080`. If you change this port, update both `/etc/crowdsec/config.yaml` AND `PORT_CROWDSEC_LAPI` in `lib/common.sh`.
-
-**Loki** uses `kvstore: inmemory` and `replication_factor: 1` — mandatory for single-node. Do not change to consul/memberlist unless deploying a cluster.
-
-**DOCKER-USER iptables chain** — Docker bypasses UFW by default. The firewall module inserts rules into `DOCKER-USER` to restore UFW authority. Modifying UFW rules without accounting for this will leave Docker ports exposed.
-
-### Idempotency pattern
-
-Every module checks `module_completed "<id>"` at the start and returns early if already done. Modules that install packages use `package_installed` before calling `apt-get`. Config files are backed up via `backup_file` before modification. All backups land in `./backups/` (gitignored, may contain secrets — never commit).
-
-### HARDCORE_MODE flag
-
-When `--mode=hardcore` is used, `HARDCORE_MODE=1` is exported. Individual modules check this flag to apply stricter settings (e.g., shorter Fail2Ban bantime, more restricted SSH ciphers). Check for `[[ "${HARDCORE_MODE:-0}" == "1" ]]` before adding mode-sensitive logic.
+Always `127.0.0.1:6767`. If changed via `CROWDSEC_LAPI_PORT` profile variable, the module updates both `/etc/crowdsec/config.yaml` and `/etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml`.
 
 ## Adding a New Module
 
-1. Create `modules/NN_name.sh` with `set -euo pipefail` and a `run_name()` function.
-2. Add an entry to `MODULE_REGISTRY` in `install.sh`: `"name:modules/NN_name.sh:Display Name"`.
-3. Use `require_module <dep>` at the top of `run_name()` if the module has prerequisites.
+1. Create `modules/name.sh` with `set -euo pipefail`, double-source guard, lib/common.sh source guard.
+2. Declare profile variables at top with safe defaults: `VAR="${VAR:-default}"`.
+3. Expose one public function `run_name()`.
 4. Call `mark_module_complete "name"` at the end on success.
-5. Use only functions from `lib/common.sh` for logging, state, and system checks.
+5. Wrap all destructive commands in `[[ "${DRY_RUN:-0}" != "1" ]]`.
+6. Add to relevant profile `.conf` files under `ENABLED_MODULES`.
+7. Add a `post_module_verify "name"` hook in `lib/validation.sh` if applicable.
+8. Document threat model at top of file (what threat, what breaks, what trade-off).
+
+## Key Design Constraints
+
+- **No `experimental: true` in Docker daemon.json** — security risk on production outweighs metrics endpoint benefit.
+- **CrowdSec LAPI never on 8080** — cAdvisor uses that port internally.
+- **Loki kvstore always `inmemory` for single-node** — memberlist/consul only for multi-replica clusters.
+- **sshd never restarted without confirmation gate** — SSH misconfiguration can lock out permanently.
+- **All modules must tolerate being re-run** — no action if state is already correct.

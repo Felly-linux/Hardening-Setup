@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# modules/02_users.sh — User management & password policy
+# modules/users.sh — User management & password policy
 # =============================================================================
 # Creates an admin user with strong credentials, configures sudo access,
 # installs SSH keys, and enforces a PAM password policy.
@@ -25,6 +25,18 @@ set -euo pipefail
 [[ -n "${_MODULE_USERS_LOADED:-}" ]] && return 0
 readonly _MODULE_USERS_LOADED=1
 
+# Source common library if not already loaded
+if [[ -z "${_VPS_HARDENING_COMMON_LOADED:-}" ]]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    # shellcheck source=../lib/common.sh
+    source "${SCRIPT_DIR}/../lib/common.sh"
+fi
+
+# =============================================================================
+# Profile variables with safe defaults
+# =============================================================================
+DRY_RUN="${DRY_RUN:-0}"
+
 # ---------------------------------------------------------------------------
 # run_users — Main entry point
 # ---------------------------------------------------------------------------
@@ -34,7 +46,9 @@ run_users() {
     log_step 1 7 "Configuring admin user"
     local admin_user
     admin_user="$(_users_create_admin)"
-    save_state "admin_user" "$admin_user"
+    if [[ "${DRY_RUN}" != "1" ]]; then
+        save_state "admin_user" "$admin_user"
+    fi
 
     log_step 2 7 "Configuring SSH public key authentication"
     _users_configure_ssh_key "$admin_user"
@@ -58,6 +72,8 @@ run_users() {
 
     printf "\n${YELLOW}${BOLD}  IMPORTANT:${RESET}${YELLOW} Make sure you have tested SSH key login as '${admin_user}'\n"
     printf "  before the SSH module disables password authentication!${RESET}\n\n"
+
+    mark_module_complete "users"
 }
 
 # ---------------------------------------------------------------------------
@@ -79,26 +95,40 @@ _users_create_admin() {
         log_info "User '${username}' already exists."
     else
         log_info "Creating user '${username}'..."
-        # Create user with home directory, bash shell, no password initially
-        useradd -m -s /bin/bash -c "VPS Admin (created by hardening suite)" "$username"
-        log_success "User '${username}' created."
+        if [[ "${DRY_RUN}" == "1" ]]; then
+            log_info "[DRY-RUN] Would create user '${username}' with home directory and bash shell"
+        else
+            # Create user with home directory, bash shell, no password initially
+            useradd -m -s /bin/bash -c "VPS Admin (created by hardening suite)" "$username"
+            log_success "User '${username}' created."
 
-        # Set a password interactively
-        log_info "Set a strong password for '${username}':"
-        passwd "$username"
+            # Set a password interactively
+            log_info "Set a strong password for '${username}':"
+            passwd "$username"
+        fi
     fi
 
     # Ensure the user is in the sudo group
-    if ! groups "$username" | grep -qw sudo; then
-        usermod -aG sudo "$username"
-        log_success "User '${username}' added to sudo group."
+    if id "$username" &>/dev/null && ! groups "$username" | grep -qw sudo; then
+        if [[ "${DRY_RUN}" == "1" ]]; then
+            log_info "[DRY-RUN] Would add '${username}' to sudo group"
+        else
+            usermod -aG sudo "$username"
+            log_success "User '${username}' added to sudo group."
+        fi
     else
-        log_info "User '${username}' is already in sudo group."
+        log_info "User '${username}' is already in sudo group (or user not yet created in DRY_RUN)."
     fi
 
     # Ensure home directory has correct permissions
-    chmod 750 "/home/${username}" 2>/dev/null || true
-    chown "${username}:${username}" "/home/${username}" 2>/dev/null || true
+    if id "$username" &>/dev/null; then
+        if [[ "${DRY_RUN}" == "1" ]]; then
+            log_info "[DRY-RUN] Would set /home/${username} permissions to 750"
+        else
+            chmod 750 "/home/${username}" 2>/dev/null || true
+            chown "${username}:${username}" "/home/${username}" 2>/dev/null || true
+        fi
+    fi
 
     echo "$username"
 }
@@ -109,9 +139,14 @@ _users_create_admin() {
 _users_configure_ssh_key() {
     local username="$1"
     local home_dir
-    home_dir="$(getent passwd "$username" | cut -d: -f6)"
+    home_dir="$(getent passwd "$username" 2>/dev/null | cut -d: -f6 || echo "/home/${username}")"
     local ssh_dir="${home_dir}/.ssh"
     local auth_keys="${ssh_dir}/authorized_keys"
+
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        log_info "[DRY-RUN] Would create ${ssh_dir} (700) and manage ${auth_keys}"
+        return 0
+    fi
 
     mkdir -p "$ssh_dir"
     chmod 700 "$ssh_dir"
@@ -120,7 +155,6 @@ _users_configure_ssh_key() {
     # Check if authorized_keys already has entries
     if [[ -f "$auth_keys" && -s "$auth_keys" ]]; then
         log_info "authorized_keys already contains key(s)."
-        local add_more
         if confirm "Add another SSH public key?"; then
             _users_add_ssh_key "$username" "$auth_keys"
         fi
@@ -175,6 +209,14 @@ _users_add_ssh_key() {
 # _users_set_password_policy — Configure PAM for strong passwords
 # ---------------------------------------------------------------------------
 _users_set_password_policy() {
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        log_info "[DRY-RUN] Would install libpam-pwquality"
+        log_info "[DRY-RUN] Would write /etc/security/pwquality.conf"
+        log_info "[DRY-RUN] Would update /etc/pam.d/common-password with pam_pwquality"
+        log_info "[DRY-RUN] Would update /etc/login.defs with PASS_MAX_DAYS=90, SHA512"
+        return 0
+    fi
+
     # Install pwquality library
     DEBIAN_FRONTEND=noninteractive apt-get install -y libpam-pwquality >> "$LOG_FILE" 2>&1
 
@@ -259,6 +301,11 @@ _users_configure_sudo() {
         return 0
     fi
 
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        log_info "[DRY-RUN] Would write sudoers drop-in: ${sudoers_drop}"
+        return 0
+    fi
+
     if confirm "Configure passwordless sudo for '${username}'? (convenient but less secure)" "n"; then
         cat > "$sudoers_drop" << EOF
 # Sudoers drop-in created by VPS Hardening Suite
@@ -289,6 +336,13 @@ EOF
 # _users_disable_root_password — Lock root password and disable root shell
 # ---------------------------------------------------------------------------
 _users_disable_root_password() {
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        log_info "[DRY-RUN] Would lock root password (passwd -l root)"
+        log_info "[DRY-RUN] Would optionally set root shell to /usr/sbin/nologin"
+        log_info "[DRY-RUN] Would truncate /etc/securetty to disable console root login"
+        return 0
+    fi
+
     # Lock root password (ssh login with password will fail; key login still works)
     passwd -l root >> "$LOG_FILE" 2>&1
     log_success "Root password locked."
@@ -319,18 +373,25 @@ _users_disable_root_password() {
 _users_set_umask() {
     local profile_file="/etc/profile.d/99-secure-umask.sh"
 
-    if [[ ! -f "$profile_file" ]]; then
-        cat > "$profile_file" << 'EOF'
+    if [[ -f "$profile_file" ]]; then
+        log_info "Secure umask already configured."
+        return 0
+    fi
+
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        log_info "[DRY-RUN] Would write ${profile_file} with umask 027"
+        log_info "[DRY-RUN] Would update UMASK in /etc/login.defs"
+        return 0
+    fi
+
+    cat > "$profile_file" << 'EOF'
 #!/bin/sh
 # /etc/profile.d/99-secure-umask.sh — VPS Hardening Suite
 # Set default umask to 027: owner full, group read+execute, others nothing
 umask 027
 EOF
-        chmod 644 "$profile_file"
-        log_success "Secure umask (027) configured via /etc/profile.d/"
-    else
-        log_info "Secure umask already configured."
-    fi
+    chmod 644 "$profile_file"
+    log_success "Secure umask (027) configured via /etc/profile.d/"
 
     # Also update /etc/login.defs
     local login_defs="/etc/login.defs"
@@ -345,6 +406,13 @@ EOF
 # _users_login_security — Configure login failure limits and account lockout
 # ---------------------------------------------------------------------------
 _users_login_security() {
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        log_info "[DRY-RUN] Would install libpam-faillock"
+        log_info "[DRY-RUN] Would configure pam_faillock in /etc/pam.d/common-auth (5 failures → 15 min lockout)"
+        log_info "[DRY-RUN] Would set LOGIN_RETRIES=5, LOGIN_TIMEOUT=60 in /etc/login.defs"
+        return 0
+    fi
+
     # Configure PAM tally for account lockout after repeated failures
     DEBIAN_FRONTEND=noninteractive apt-get install -y libpam-faillock >> "$LOG_FILE" 2>&1 || true
 

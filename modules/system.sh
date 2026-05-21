@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# modules/01_system.sh — System base hardening
+# modules/system.sh — System base hardening
 # =============================================================================
 # Performs foundational system hardening before any application-level modules
 # run. This module is intentionally idempotent: every step checks whether it
@@ -26,6 +26,18 @@ set -euo pipefail
 
 [[ -n "${_MODULE_SYSTEM_LOADED:-}" ]] && return 0
 readonly _MODULE_SYSTEM_LOADED=1
+
+# Source common library if not already loaded
+if [[ -z "${_VPS_HARDENING_COMMON_LOADED:-}" ]]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    # shellcheck source=../lib/common.sh
+    source "${SCRIPT_DIR}/../lib/common.sh"
+fi
+
+# =============================================================================
+# Profile variables with safe defaults
+# =============================================================================
+DRY_RUN="${DRY_RUN:-0}"
 
 # ---------------------------------------------------------------------------
 # run_system — Main entry point
@@ -64,12 +76,18 @@ run_system() {
     _system_configure_coredumps
 
     log_success "System base hardening complete."
+    mark_module_complete "system"
 }
 
 # ---------------------------------------------------------------------------
 # _system_update_packages — apt update + full upgrade
 # ---------------------------------------------------------------------------
 _system_update_packages() {
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        log_info "[DRY-RUN] Would run: apt-get update && apt-get upgrade -y"
+        return 0
+    fi
+
     log_info "Running apt-get update..."
     DEBIAN_FRONTEND=noninteractive apt-get update -qq >> "$LOG_FILE" 2>&1
 
@@ -111,6 +129,11 @@ _system_install_tools() {
 
     log_info "Installing ${#packages[@]} packages..."
 
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        log_info "[DRY-RUN] Would install: ${packages[*]}"
+        return 0
+    fi
+
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
         -o Dpkg::Options::="--force-confdef" \
         -o Dpkg::Options::="--force-confold" \
@@ -134,15 +157,23 @@ _system_set_timezone() {
 
     # Validate timezone
     if [[ -n "$tz" && -f "/usr/share/zoneinfo/${tz}" ]]; then
-        timedatectl set-timezone "$tz" >> "$LOG_FILE" 2>&1
-        log_success "Timezone set to: ${tz}"
-        save_state "system_timezone" "$tz"
+        if [[ "${DRY_RUN}" == "1" ]]; then
+            log_info "[DRY-RUN] Would set timezone to: ${tz}"
+        else
+            timedatectl set-timezone "$tz" >> "$LOG_FILE" 2>&1
+            log_success "Timezone set to: ${tz}"
+            save_state "system_timezone" "$tz"
+        fi
     elif [[ "$tz" == "$current_tz" ]]; then
         log_info "Timezone unchanged: ${tz}"
-        save_state "system_timezone" "$tz"
+        if [[ "${DRY_RUN}" != "1" ]]; then
+            save_state "system_timezone" "$tz"
+        fi
     else
         log_warning "Invalid timezone '${tz}'. Keeping current: ${current_tz}"
-        save_state "system_timezone" "$current_tz"
+        if [[ "${DRY_RUN}" != "1" ]]; then
+            save_state "system_timezone" "$current_tz"
+        fi
     fi
 }
 
@@ -162,20 +193,26 @@ _system_set_hostname() {
     # Validate: only letters, numbers, hyphens; max 63 chars
     if [[ "$new_hostname" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$ ]] \
        && [[ "$new_hostname" != "$current_hostname" ]]; then
-        hostnamectl set-hostname "$new_hostname" >> "$LOG_FILE" 2>&1
-
-        # Update /etc/hosts to reflect new hostname
-        if grep -q "127.0.1.1" /etc/hosts; then
-            sed -i "s/127\.0\.1\.1.*/127.0.1.1\t${new_hostname}/" /etc/hosts
+        if [[ "${DRY_RUN}" == "1" ]]; then
+            log_info "[DRY-RUN] Would set hostname to: ${new_hostname}"
         else
-            echo "127.0.1.1	${new_hostname}" >> /etc/hosts
-        fi
+            hostnamectl set-hostname "$new_hostname" >> "$LOG_FILE" 2>&1
 
-        log_success "Hostname set to: ${new_hostname}"
-        save_state "system_hostname" "$new_hostname"
+            # Update /etc/hosts to reflect new hostname
+            if grep -q "127.0.1.1" /etc/hosts; then
+                sed -i "s/127\.0\.1\.1.*/127.0.1.1\t${new_hostname}/" /etc/hosts
+            else
+                echo "127.0.1.1	${new_hostname}" >> /etc/hosts
+            fi
+
+            log_success "Hostname set to: ${new_hostname}"
+            save_state "system_hostname" "$new_hostname"
+        fi
     else
         log_info "Hostname unchanged: ${current_hostname}"
-        save_state "system_hostname" "$current_hostname"
+        if [[ "${DRY_RUN}" != "1" ]]; then
+            save_state "system_hostname" "$current_hostname"
+        fi
     fi
 }
 
@@ -184,6 +221,11 @@ _system_set_hostname() {
 # ---------------------------------------------------------------------------
 _system_configure_ntp() {
     local ntp_conf="/etc/systemd/timesyncd.conf"
+
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        log_info "[DRY-RUN] Would write NTP config to ${ntp_conf} and restart systemd-timesyncd"
+        return 0
+    fi
 
     backup_file "$ntp_conf" >> "$LOG_FILE" 2>&1 || true
 
@@ -229,9 +271,13 @@ _system_disable_services() {
            && systemctl list-unit-files "${svc}.service" | grep -q "${svc}"; then
             if service_running "$svc"; then
                 log_info "  Stopping and disabling: ${svc}"
-                systemctl stop "$svc" >> "$LOG_FILE" 2>&1 || true
-                systemctl disable "$svc" >> "$LOG_FILE" 2>&1 || true
-                systemctl mask "$svc" >> "$LOG_FILE" 2>&1 || true
+                if [[ "${DRY_RUN}" == "1" ]]; then
+                    log_info "[DRY-RUN] Would stop and disable service: ${svc}"
+                else
+                    systemctl stop "$svc" >> "$LOG_FILE" 2>&1 || true
+                    systemctl disable "$svc" >> "$LOG_FILE" 2>&1 || true
+                    systemctl mask "$svc" >> "$LOG_FILE" 2>&1 || true
+                fi
             else
                 log_info "  Already stopped/disabled: ${svc}"
             fi
@@ -246,6 +292,11 @@ _system_disable_services() {
 # ---------------------------------------------------------------------------
 _system_apply_sysctl() {
     local sysctl_file="/etc/sysctl.d/99-vps-hardening.conf"
+
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        log_info "[DRY-RUN] Would write sysctl config to ${sysctl_file} and run sysctl --system"
+        return 0
+    fi
 
     # Backup existing file if present
     [[ -f "$sysctl_file" ]] && backup_file "$sysctl_file"
@@ -373,6 +424,12 @@ _system_configure_auto_updates() {
     local auto_conf="/etc/apt/apt.conf.d/20auto-upgrades"
     local unattended_conf="/etc/apt/apt.conf.d/50unattended-upgrades"
 
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        log_info "[DRY-RUN] Would write ${auto_conf} and ${unattended_conf}"
+        log_info "[DRY-RUN] Would enable and restart unattended-upgrades service"
+        return 0
+    fi
+
     # Write apt auto-upgrade triggers
     cat > "$auto_conf" << 'EOF'
 // /etc/apt/apt.conf.d/20auto-upgrades — configured by VPS Hardening Suite
@@ -433,19 +490,27 @@ _system_harden_tmp() {
         log_info "/tmp already mounted separately. Checking options..."
         # If mounted but without noexec, remount
         if ! mount | grep " /tmp " | grep -q "noexec"; then
-            mount -o remount,noexec,nosuid,nodev /tmp 2>/dev/null \
-                && log_success "/tmp remounted with noexec,nosuid,nodev" \
-                || log_warning "Could not remount /tmp with hardened options"
+            if [[ "${DRY_RUN}" == "1" ]]; then
+                log_info "[DRY-RUN] Would remount /tmp with noexec,nosuid,nodev"
+            else
+                mount -o remount,noexec,nosuid,nodev /tmp 2>/dev/null \
+                    && log_success "/tmp remounted with noexec,nosuid,nodev" \
+                    || log_warning "Could not remount /tmp with hardened options"
+            fi
         else
             log_info "/tmp already has noexec option. Skipping."
         fi
     else
         # /tmp is on root partition — add tmpfs entry if not already in fstab
         if ! grep -q "^tmpfs /tmp" "$fstab" 2>/dev/null; then
-            backup_file "$fstab"
-            echo "tmpfs /tmp tmpfs defaults,noatime,nosuid,nodev,noexec,mode=1777,size=512m 0 0" >> "$fstab"
-            mount -a 2>/dev/null && log_success "/tmp tmpfs entry added to fstab and mounted." \
-                || log_warning "Added /tmp to fstab; will apply on next boot."
+            if [[ "${DRY_RUN}" == "1" ]]; then
+                log_info "[DRY-RUN] Would add tmpfs /tmp entry to ${fstab} and run mount -a"
+            else
+                backup_file "$fstab"
+                echo "tmpfs /tmp tmpfs defaults,noatime,nosuid,nodev,noexec,mode=1777,size=512m 0 0" >> "$fstab"
+                mount -a 2>/dev/null && log_success "/tmp tmpfs entry added to fstab and mounted." \
+                    || log_warning "Added /tmp to fstab; will apply on next boot."
+            fi
         else
             log_info "/tmp tmpfs already in fstab. Skipping."
         fi
@@ -458,17 +523,24 @@ _system_harden_tmp() {
 _system_configure_coredumps() {
     local limits_file="/etc/security/limits.d/99-disable-coredumps.conf"
 
-    if [[ ! -f "$limits_file" ]]; then
-        cat > "$limits_file" << 'EOF'
+    if [[ -f "$limits_file" ]]; then
+        log_info "Core dump limits already configured."
+        return 0
+    fi
+
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        log_info "[DRY-RUN] Would write ${limits_file} to disable core dumps"
+        log_info "[DRY-RUN] Would run: sysctl -w fs.suid_dumpable=0"
+        return 0
+    fi
+
+    cat > "$limits_file" << 'EOF'
 # /etc/security/limits.d/99-disable-coredumps.conf
 # Disable core dumps system-wide to prevent memory leaks of sensitive data
 *    hard    core    0
 *    soft    core    0
 EOF
-        log_success "Core dumps disabled via /etc/security/limits.d/"
-    else
-        log_info "Core dump limits already configured."
-    fi
+    log_success "Core dumps disabled via /etc/security/limits.d/"
 
     # Also set via sysctl (belt-and-suspenders)
     sysctl -w fs.suid_dumpable=0 >> "$LOG_FILE" 2>&1 || true
