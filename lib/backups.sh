@@ -35,8 +35,35 @@ backup_file() {
     local dest="${backup_dir}/${filename}.${timestamp}.bak"
 
     cp -p "$src" "$dest"
+    # Sidecar records the original absolute path for restore_file_auto
+    echo "$src" > "${dest}.orig"
+
     log_success "Backed up: $src → $dest"
     echo "$dest"
+}
+
+# restore_file_auto(backup_path) — Restores a backup to its original location
+# by reading the .orig sidecar written by backup_file.
+restore_file_auto() {
+    local backup_path="$1"
+    local sidecar="${backup_path}.orig"
+
+    if [[ ! -f "$backup_path" ]]; then
+        log_error "restore_file_auto: backup not found: $backup_path"
+        return 1
+    fi
+
+    if [[ ! -f "$sidecar" ]]; then
+        log_warning "restore_file_auto: no .orig sidecar for ${backup_path}"
+        log_warning "Cannot determine original path. Skipping."
+        return 1
+    fi
+
+    local original_path
+    original_path="$(cat "$sidecar")"
+
+    restore_file "$backup_path" "$original_path"
+    echo "$original_path"
 }
 
 # restore_file(backup_path, target_path) — Copies a backup back to its original

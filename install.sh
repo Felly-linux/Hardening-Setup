@@ -545,7 +545,145 @@ _report_json() {
 }
 
 # ---------------------------------------------------------------------------
-# Interactive menu (when no --profile given)
+# Interactive menu helpers
+# ---------------------------------------------------------------------------
+
+# _module_status_symbol(id) — Returns a colored symbol for module state
+_module_status_symbol() {
+    local id="$1"
+    local state
+    state="$(get_state "module_${id}" 2>/dev/null || echo "")"
+    case "$state" in
+        completed) printf "${GREEN}✔${RESET}" ;;
+        failed)    printf "${RED}✖${RESET}" ;;
+        *)         printf "${WHITE}·${RESET}" ;;
+    esac
+}
+
+# _show_module_list(enabled_modules_str) — Prints module list with status symbols
+_show_module_list() {
+    local enabled="$1"
+    echo ""
+    printf "  ${BOLD}%-4s %-14s %-28s %s${RESET}\n" "#" "MODULE" "DESCRIPTION" "STATUS"
+    printf "  %-4s %-14s %-28s %s\n"   "─" "──────" "───────────" "──────"
+    local n=1
+    for entry in "${MODULE_REGISTRY[@]}"; do
+        local id script name
+        id="$(_module_id "$entry")"
+        name="$(_module_name "$entry")"
+        local enabled_mark="  "
+        # shellcheck disable=SC2076
+        if [[ " $enabled " =~ " $id " ]]; then
+            enabled_mark="${CYAN}▶${RESET} "
+        else
+            enabled_mark="${WHITE}  ${RESET}"
+        fi
+        local sym
+        sym="$(_module_status_symbol "$id")"
+        printf "  ${enabled_mark}${BOLD}%2d)${RESET} %-14s %-28s %s\n" \
+            "$n" "$id" "$name" "$sym"
+        (( n++ ))
+    done
+    echo ""
+    printf "  ${GREEN}✔${RESET} = completed   ${WHITE}·${RESET} = pending   ${RED}✖${RESET} = failed\n"
+}
+
+# _pick_custom_modules() — Interactive module selector; sets ENABLED_MODULES
+_pick_custom_modules() {
+    local -a toggled=()
+
+    # Start with all modules off; user toggles them on
+    for entry in "${MODULE_REGISTRY[@]}"; do
+        toggled+=("0")
+    done
+    # preflight always on
+    toggled[0]="1"
+
+    while true; do
+        clear 2>/dev/null || true
+        echo ""
+        printf "  ${BOLD}${WHITE}Custom Module Selection${RESET}  (preflight always runs)\n"
+        printf "  ${CYAN}Toggle modules on/off by number. Enter 0 to confirm.${RESET}\n"
+        echo ""
+        printf "  ${BOLD}%-4s %-3s %-14s %s${RESET}\n" "#" "ON?" "MODULE" "DESCRIPTION"
+        printf "  %-4s %-3s %-14s %s\n"   "─" "───" "──────" "───────────"
+
+        local n=1
+        for entry in "${MODULE_REGISTRY[@]}"; do
+            local id name sym
+            id="$(_module_id "$entry")"
+            name="$(_module_name "$entry")"
+            sym="$(_module_status_symbol "$id")"
+            local on="${toggled[$((n-1))]}"
+            local toggle_str
+            if [[ "$on" == "1" ]]; then
+                toggle_str="${GREEN}[ON] ${RESET}"
+            else
+                toggle_str="${WHITE}[   ]${RESET}"
+            fi
+            printf "  ${BOLD}%2d)${RESET} %s %-14s %-28s %s\n" \
+                "$n" "$toggle_str" "$id" "$name" "$sym"
+            (( n++ ))
+        done
+
+        echo ""
+        local choice
+        choice="$(ask "Toggle module # (0 = done)" "0")"
+
+        if [[ "$choice" == "0" || -z "$choice" ]]; then
+            break
+        fi
+
+        if (( choice >= 1 && choice <= ${#MODULE_REGISTRY[@]} )); then
+            local idx=$(( choice - 1 ))
+            local entry_id
+            entry_id="$(_module_id "${MODULE_REGISTRY[$idx]}")"
+            if [[ "$entry_id" == "preflight" ]]; then
+                log_warning "preflight cannot be disabled."
+            elif [[ "${toggled[$idx]}" == "1" ]]; then
+                toggled[$idx]="0"
+            else
+                toggled[$idx]="1"
+            fi
+        fi
+    done
+
+    # Build ENABLED_MODULES from selections
+    ENABLED_MODULES=""
+    local n=1
+    for entry in "${MODULE_REGISTRY[@]}"; do
+        local id
+        id="$(_module_id "$entry")"
+        if [[ "${toggled[$((n-1))]}" == "1" ]]; then
+            ENABLED_MODULES="${ENABLED_MODULES} ${id}"
+        fi
+        (( n++ ))
+    done
+    ENABLED_MODULES="$(echo "$ENABLED_MODULES" | xargs)"   # trim
+    export ENABLED_MODULES
+}
+
+# _confirm_run(profile, modules, dry_run) — Show run summary and confirm
+_confirm_run() {
+    local profile="$1"
+    local modules="$2"
+    local dry="$3"
+
+    echo ""
+    printf "  ${BOLD}══════════════════════════════════════════${RESET}\n"
+    if [[ "$dry" == "1" ]]; then
+        printf "  ${BOLD}${CYAN}  DRY-RUN — No changes will be made${RESET}\n"
+    fi
+    printf "  ${BOLD}  Profile  :${RESET} %s\n" "$profile"
+    printf "  ${BOLD}  Modules  :${RESET} %s\n" "$modules"
+    printf "  ${BOLD}══════════════════════════════════════════${RESET}\n"
+    echo ""
+
+    confirm "Proceed?" "y"
+}
+
+# ---------------------------------------------------------------------------
+# Interactive main menu (when no --profile given)
 # ---------------------------------------------------------------------------
 show_main_menu() {
     while true; do
@@ -554,7 +692,7 @@ show_main_menu() {
 
         local profiles_dir="${PROJECT_ROOT}/profiles"
         echo ""
-        printf "  ${BOLD}${WHITE}Select a profile to apply:${RESET}\n\n"
+        printf "  ${BOLD}${WHITE}MAIN MENU${RESET}\n\n"
 
         local i=1
         local -a profile_names=()
@@ -570,9 +708,10 @@ show_main_menu() {
         done
 
         echo ""
-        printf "  ${BOLD}%2d)${RESET} ${YELLOW}audit-only${RESET}           Run security audit, no changes\n" "$i"
-        (( i++ ))
-        printf "  ${BOLD}%2d)${RESET} Exit\n" "$i"
+        printf "  ${BOLD}%2d)${RESET} ${MAGENTA}custom${RESET}               Pick individual modules\n" "$i";  local opt_custom=$i; (( i++ ))
+        printf "  ${BOLD}%2d)${RESET} ${YELLOW}audit-only${RESET}           Security score check, no changes\n" "$i"; local opt_audit=$i; (( i++ ))
+        printf "  ${BOLD}%2d)${RESET} ${WHITE}status${RESET}               Show module completion status\n" "$i"; local opt_status=$i; (( i++ ))
+        printf "  ${BOLD}%2d)${RESET} Exit\n" "$i"; local opt_exit=$i
         echo ""
 
         local choice
@@ -580,32 +719,104 @@ show_main_menu() {
 
         local total_profiles=${#profile_names[@]}
 
-        if (( choice <= total_profiles )); then
+        if (( choice >= 1 && choice <= total_profiles )); then
+            # Profile selected
             local selected_profile="${profile_names[$((choice-1))]}"
             PROFILE_NAME="$selected_profile"
             load_profile "$PROFILE_NAME"
 
+            # Show what will run
+            _show_module_list "${ENABLED_MODULES:-}"
+
+            echo ""
+            printf "  ${BOLD}Run mode:${RESET}\n"
+            printf "  ${BOLD}r)${RESET} Run (make changes)\n"
+            printf "  ${BOLD}d)${RESET} Dry-run (preview only)\n"
+            printf "  ${BOLD}b)${RESET} Back\n"
+            echo ""
             local run_mode
-            run_mode="$(ask "Run mode: [r]un / [d]ry-run / [b]ack" "r")"
-            case "$run_mode" in
+            run_mode="$(ask "Mode" "r")"
+
+            case "${run_mode,,}" in
                 d|dry|dry-run)
                     DRY_RUN=1; export DRY_RUN
+                    log_info "DRY-RUN MODE enabled."
                     ;;
                 b|back)
+                    DRY_RUN=0; export DRY_RUN
                     continue
                     ;;
             esac
 
+            if ! _confirm_run "$PROFILE_NAME" "${ENABLED_MODULES:-}" "$DRY_RUN"; then
+                DRY_RUN=0; export DRY_RUN
+                continue
+            fi
+
             run_enabled_modules
             print_execution_report
-            read -rp "  Press Enter to continue..."
+            echo ""
+            read -rp "  Press Enter to return to menu..."
+            DRY_RUN=0; export DRY_RUN
 
-        elif (( choice == total_profiles + 1 )); then
+        elif (( choice == opt_custom )); then
+            # Custom module picker
+            PROFILE_NAME="custom"
+            _pick_custom_modules
+
+            if [[ -z "${ENABLED_MODULES:-}" ]]; then
+                log_warning "No modules selected."
+                read -rp "  Press Enter to continue..."
+                continue
+            fi
+
+            echo ""
+            printf "  ${BOLD}Run mode:${RESET}\n"
+            printf "  ${BOLD}r)${RESET} Run   ${BOLD}d)${RESET} Dry-run   ${BOLD}b)${RESET} Back\n"
+            echo ""
+            local run_mode
+            run_mode="$(ask "Mode" "r")"
+
+            case "${run_mode,,}" in
+                d|dry|dry-run)
+                    DRY_RUN=1; export DRY_RUN
+                    ;;
+                b|back)
+                    DRY_RUN=0; export DRY_RUN
+                    continue
+                    ;;
+            esac
+
+            if ! _confirm_run "custom" "${ENABLED_MODULES}" "$DRY_RUN"; then
+                DRY_RUN=0; export DRY_RUN
+                continue
+            fi
+
+            run_enabled_modules
+            print_execution_report
+            echo ""
+            read -rp "  Press Enter to return to menu..."
+            DRY_RUN=0; export DRY_RUN
+
+        elif (( choice == opt_audit )); then
             run_audit_only
-            read -rp "  Press Enter to continue..."
-        else
+            echo ""
+            read -rp "  Press Enter to return to menu..."
+
+        elif (( choice == opt_status )); then
+            clear 2>/dev/null || true
+            echo ""
+            printf "  ${BOLD}${WHITE}Module Status${RESET}\n"
+            _show_module_list "$(for e in "${MODULE_REGISTRY[@]}"; do _module_id "$e"; done | tr '\n' ' ')"
+            echo ""
+            read -rp "  Press Enter to return to menu..."
+
+        elif (( choice == opt_exit )); then
             log_info "Exiting."
             exit 0
+
+        else
+            log_warning "Invalid choice: ${choice}"
         fi
     done
 }
